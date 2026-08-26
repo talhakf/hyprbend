@@ -124,11 +124,10 @@ All hardware devices are auto-detected:
 ```
 hyprbend/
 ├── PKGBUILD              # Arch package build
+├── hyprbend              # Main service script
+├── hyprbend.service      # Systemd user service
 ├── hyprbend.install      # pacman install hooks
-├── README.md
-└── src/
-    ├── hyprbend          # Main service script
-    └── hyprbend.service  # Systemd user service
+└── README.md
 ```
 
 ## License
