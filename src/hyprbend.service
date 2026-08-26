@@ -1,0 +1,13 @@
+[Unit]
+Description=Hyprland 2-in-1 rotation and keyboard service
+After=graphical-session.target iio-sensor-proxy.service
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/hyprbend
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target
