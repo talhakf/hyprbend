@@ -1,0 +1,271 @@
+#!/bin/bash
+# hyprbend-check — Diagnostic and auto-fix tool for hyprbend sensor setup
+#
+# Usage:
+#   hyprbend-check          Show full diagnostic report
+#   hyprbend-check --fix    Attempt to automatically fix issues
+#
+# Detects: Intel ISH, AMD SFH, generic IIO
+# Checks: firmware, IIO devices, services, dependencies
+
+set -euo pipefail
+
+# --- Find detect library ---
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# When installed: /usr/bin/hyprbend-check → library at /usr/lib/hyprbend/detect.sh
+# During development: src/hyprbend-check → src/hyprbend-detect.sh
+DETECT_SH=""
+for candidate in \
+    "${SCRIPT_DIR}/hyprbend-detect.sh" \
+    "${SCRIPT_DIR}/../lib/hyprbend/detect.sh" \
+    "/usr/lib/hyprbend/detect.sh"; do
+    if [[ -f "$candidate" ]]; then
+        DETECT_SH="$candidate"
+        break
+    fi
+done
+
+if [[ -z "$DETECT_SH" ]]; then
+    echo "[hyprbend-check] ERROR: Cannot find hyprbend-detect.sh" >&2
+    exit 1
+fi
+# shellcheck source=hyprbend-detect.sh
+source "$DETECT_SH"
+
+# --- Colors ---
+
+if [[ -t 1 ]]; then
+    C_GREEN="\033[0;32m"
+    C_RED="\033[0;31m"
+    C_YELLOW="\033[0;33m"
+    C_CYAN="\033[0;36m"
+    C_BOLD="\033[1m"
+    C_RESET="\033[0m"
+else
+    C_GREEN="" C_RED="" C_YELLOW="" C_CYAN="" C_BOLD="" C_RESET=""
+fi
+
+pass()   { echo -e "  ${C_GREEN}✓${C_RESET} $*"; }
+fail()   { echo -e "  ${C_RED}✗${C_RESET} $*"; }
+warn()   { echo -e "  ${C_YELLOW}⚠${C_RESET} $*"; }
+info()   { echo -e "  ${C_CYAN}i${C_RESET} $*"; }
+header() { echo -e "\n${C_BOLD}$*${C_RESET}"; }
+
+# --- Report ---
+
+report_platform() {
+    header "Platform Detection" >&2
+
+    local sys_vendor product_family product_name product_sku
+    sys_vendor=$(read_dmi sys_vendor)
+    product_family=$(read_dmi product_family)
+    product_name=$(read_dmi product_name)
+    product_sku=$(read_dmi product_sku)
+
+    info "System: ${sys_vendor:-unknown} ${product_family:-unknown} ${product_name:-unknown}" >&2
+    [[ -n "$product_sku" ]] && info "SKU: ${product_sku}" >&2
+
+    local platform
+    platform=$(detect_platform) || true
+
+    case "$platform" in
+        intel_ish)
+            pass "Intel ISH detected" >&2
+            local gen
+            gen=$(detect_ish_gen)
+            info "ISH generation: ${gen:-unknown}" >&2
+            ;;
+        amd_sfh)
+            pass "AMD SFH detected" >&2
+            local mod
+            mod=$(lsmod 2>/dev/null | grep amd_sfh || echo "")
+            if [[ -n "$mod" ]]; then
+                pass "amd_sfh module loaded" >&2
+            else
+                fail "amd_sfh module not loaded" >&2
+            fi
+            ;;
+        none)
+            fail "No Intel ISH or AMD SFH platform detected" >&2
+            info "Check if your hardware has a sensor hub (2-in-1 / tablet)" >&2
+            ;;
+    esac
+
+    echo "$platform"
+}
+
+report_firmware() {
+    local platform=$1
+    header "Firmware Status"
+
+    if [[ "$platform" != "intel_ish" ]]; then
+        if [[ "$platform" == "amd_sfh" ]]; then
+            info "AMD SFH does not require userspace firmware — driver is kernel-native"
+        else
+            info "Firmware check skipped (not Intel ISH)"
+        fi
+        return
+    fi
+
+    check_ish_firmware || { fail "Cannot compute firmware names (unknown ISH generation)"; return; }
+
+    local fw_dir="/lib/firmware/intel/ish"
+    local found_any=false
+    local found_specific=false
+
+    for i in "${!ISH_FIRMWARE_NAMES[@]}"; do
+        local fw="${ISH_FIRMWARE_NAMES[$i]}"
+        local status="${ISH_FIRMWARE_STATUS[$i]}"
+        local path="${ISH_FIRMWARE_PATHS[$i]}"
+        local pattern_num=$((i + 1))
+
+        case "$status" in
+            found)
+                local size
+                size=$(stat -c%s "$path" 2>/dev/null || echo "?")
+                pass "Pattern ${pattern_num}: ${fw} (${size} bytes)"
+                found_any=true
+                if [[ "$i" -lt 8 ]]; then
+                    found_specific=true
+                fi
+                ;;
+            found_zst)
+                local size
+                size=$(stat -c%s "$path" 2>/dev/null || echo "?")
+                pass "Pattern ${pattern_num}: ${fw}.zst (${size} bytes, compressed)"
+                found_any=true
+                if [[ "$i" -lt 8 ]]; then
+                    found_specific=true
+                fi
+                ;;
+            missing)
+                if [[ "$i" -eq 8 ]]; then
+                    fail "Generic fallback: ${fw} — MISSING"
+                fi
+                ;;
+        esac
+    done
+
+    if $found_specific; then
+        pass "Vendor-specific firmware found for your device"
+    elif $found_any; then
+        warn "Only generic Intel firmware found — vendor-specific may be needed"
+    else
+        fail "No ISH firmware found in ${fw_dir}/"
+        info "Install linux-firmware package: sudo pacman -S linux-firmware-intel"
+    fi
+
+    # dmesg check
+    if check_dmesg_ish_errors; then
+        fail "ISH firmware errors detected in dmesg:"
+        get_dmesg_ish_lines | head -5 | while IFS= read -r line; do
+            info "  $line"
+        done
+    else
+        pass "No ISH errors in dmesg"
+    fi
+}
+
+report_iio() {
+    header "IIO Devices"
+
+    local count=0
+    local has_hinge=false
+    local has_accel=false
+
+    while IFS=' ' read -r name path; do
+        count=$((count + 1))
+        case "$name" in
+            hinge)
+                pass "Hinge sensor: ${path}"
+                has_hinge=true
+                ;;
+            accel*|bma250e|bmc150|bmi*)
+                pass "Accelerometer: ${name} (${path})"
+                has_accel=true
+                ;;
+            *)
+                info "Other IIO device: ${name} (${path})"
+                ;;
+        esac
+    done < <(enumerate_iio_devices)
+
+    if [[ "$count" -eq 0 ]]; then
+        fail "No IIO devices found"
+        info "This usually means firmware is missing or the sensor driver isn't loaded"
+        return 1
+    fi
+
+    if $has_hinge; then
+        pass "Hinge sensor present — hyprbend will work"
+    elif $has_accel; then
+        warn "Accelerometer found but no hinge sensor"
+        info "hyprbend uses the hinge sensor for laptop/tablet mode detection"
+    else
+        fail "No hinge or accelerometer found among ${count} IIO device(s)"
+        return 1
+    fi
+
+    return 0
+}
+
+report_services() {
+    header "Services & Dependencies"
+
+    # iio-sensor-proxy
+    if check_iio_sensor_proxy; then
+        pass "iio-sensor-proxy is running"
+    else
+        warn "iio-sensor-proxy is not running"
+        info "Start it: systemctl start iio-sensor-proxy"
+    fi
+
+    # monitor-sensor
+    if check_monitor_sensor; then
+        pass "monitor-sensor is available"
+    else
+        warn "monitor-sensor not found"
+        info "It comes with iio-sensor-proxy: sudo pacman -S iio-sensor-proxy"
+    fi
+
+    # hyprland
+    if command -v hyprctl &>/dev/null; then
+        pass "hyprctl is available"
+    else
+        fail "hyprctl not found — is Hyprland installed?"
+    fi
+
+    # Dependencies check
+    local missing=()
+    for dep in hyprctl monitor-sensor; do
+        command -v "$dep" &>/dev/null || missing+=("$dep")
+    done
+    if systemctl list-unit-files iio-sensor-proxy.service &>/dev/null 2>&1; then
+        :
+    else
+        missing+=("iio-sensor-proxy")
+    fi
+
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        fail "Missing: ${missing[*]}"
+    fi
+}
+
+# --- Main ---
+
+main() {
+    echo -e "${C_BOLD}hyprbend-check${C_RESET} — Sensor diagnostics for 2-in-1 laptops"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+    local platform
+    platform=$(report_platform)
+
+    report_firmware "$platform"
+    report_iio || true
+    report_services
+
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+}
+
+main

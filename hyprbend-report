@@ -1,0 +1,29 @@
+#!/bin/bash
+# hyprbend-report — Generate GitHub issue report for hyprbend
+#
+# Collects all hardware diagnostics and outputs a markdown issue body.
+# Pipe to a file: hyprbend report > issue.md
+
+set -euo pipefail
+
+# --- Find detect library ---
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DETECT_SH=""
+for candidate in \
+    "${SCRIPT_DIR}/hyprbend-detect.sh" \
+    "${SCRIPT_DIR}/../lib/hyprbend/detect.sh" \
+    "/usr/lib/hyprbend/detect.sh"; do
+    if [[ -f "$candidate" ]]; then
+        DETECT_SH="$candidate"
+        break
+    fi
+done
+
+if [[ -z "$DETECT_SH" ]]; then
+    echo "[hyprbend-report] ERROR: Cannot find hyprbend-detect.sh" >&2
+    exit 1
+fi
+# shellcheck source=hyprbend-detect.sh
+source "$DETECT_SH"
+
+report_github_issue

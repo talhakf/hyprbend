@@ -10,10 +10,38 @@
 
 set -euo pipefail
 
+# Source shared detection library
+_HYPRBEND_LIB_DIR="${HYPRBEND_LIB_DIR:-/usr/lib/hyprbend}"
+_HYPRBEND_BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${_HYPRBEND_LIB_DIR}/detect.sh" ]]; then
+    # shellcheck source=hyprbend-detect.sh
+    source "${_HYPRBEND_LIB_DIR}/detect.sh"
+fi
+
+# Subcommand dispatch: hyprbend check|fix|report
+if [[ "${1:-}" =~ ^(check|fix|report)$ ]]; then
+    _subcmd="${BASH_REMATCH[1]}"
+    shift
+    _BIN=""
+    for candidate in \
+        "${_HYPRBEND_BIN_DIR}/hyprbend-${_subcmd}" \
+        "/usr/bin/hyprbend-${_subcmd}"; do
+        if [[ -x "$candidate" ]]; then
+            _BIN="$candidate"
+            break
+        fi
+    done
+    if [[ -z "$_BIN" ]]; then
+        echo "[hyprbend] ERROR: hyprbend-${_subcmd} not found" >&2
+        exit 1
+    fi
+    exec "$_BIN" "$@"
+fi
+
 # Thresholds
 TABLET_THRESHOLD=150  # degrees - above this = tablet/tent mode
 LAPTOP_THRESHOLD=30   # degrees - below this = laptop mode
-DEBOUNCE_DELAY=1      # seconds to wait before mode switch
+DEBOUNCE_DELAY=250    # milliseconds to wait before mode switch
 
 # State
 current_mode="unknown"
@@ -209,26 +237,35 @@ switch_to_laptop() {
     fi
 }
 
+# Pre-flight sensor check
+if command -v check_sensors_present &>/dev/null; then
+    if ! check_sensors_present; then
+        log "WARNING: No hinge/accelerometer IIO devices found"
+        log "WARNING: Run 'hyprbend check' for diagnostics and fix instructions"
+        log "WARNING: Continuing in degraded mode (no auto-rotation until sensors appear)"
+    fi
+fi
+
 # Main loop
 log "Starting hyprbend..."
 
-last_switch_time=$(date +%s)
+last_switch_time=$(date +%s%3N)
 
 while true; do
     angle=$(get_hinge_angle)
-    current_time=$(date +%s)
+    current_time=$(date +%s%3N)
     time_diff=$((current_time - last_switch_time))
 
     # Determine mode based on angle
     if [[ "$angle" -ge "$TABLET_THRESHOLD" ]]; then
         if [[ "$current_mode" != "tablet" ]] && [[ "$time_diff" -ge "$DEBOUNCE_DELAY" ]]; then
             switch_to_tablet
-            last_switch_time=$(date +%s)
+            last_switch_time=$(date +%s%3N)
         fi
     elif [[ "$angle" -le "$LAPTOP_THRESHOLD" ]]; then
         if [[ "$current_mode" != "laptop" ]] && [[ "$time_diff" -ge "$DEBOUNCE_DELAY" ]]; then
             switch_to_laptop
-            last_switch_time=$(date +%s)
+            last_switch_time=$(date +%s%3N)
         fi
     fi
 
