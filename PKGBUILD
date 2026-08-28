@@ -1,15 +1,15 @@
 # Maintainer: kosmosys
 pkgname=hyprbend
 pkgver=0.1.0
-pkgrel=1
-pkgdesc="Automatic screen rotation and keyboard toggle for 2-in-1 laptops on Hyprland"
+pkgrel=5
+pkgdesc="Automatic screen rotation and virtual keyboard for 2-in-1 laptops on Hyprland"
 arch=('any')
 url="https://github.com/kosmosys/hyprbend"
 license=('MIT')
-depends=('hyprland' 'iio-sensor-proxy' 'bash' '7zip' 'curl')
+depends=('hyprland' 'iio-sensor-proxy' 'bash' '7zip' 'curl' 'jq')
 makedepends=()
-source=('hyprbend' 'hyprbend-check' 'hyprbend-fix' 'hyprbend-report' 'hyprbend-detect.sh' 'hyprbend.service')
-sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+source=('hyprbend' 'hyprbend-check' 'hyprbend-fix' 'hyprbend-report' 'hyprbend-detect.sh' 'hyprbend.service' 'KNOWN_ISSUES.md')
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
 install=hyprbend.install
 
 package() {
@@ -30,4 +30,7 @@ package() {
 
     # Install systemd user service
     install -Dm644 "$srcdir/hyprbend.service" "$pkgdir/usr/lib/systemd/user/hyprbend.service"
+
+    # Install documentation
+    install -Dm644 "$srcdir/KNOWN_ISSUES.md" "$pkgdir/usr/share/doc/hyprbend/KNOWN_ISSUES.md"
 }

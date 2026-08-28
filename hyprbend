@@ -1,14 +1,17 @@
 #!/bin/bash
-# hyprbend - Automatic screen rotation and keyboard toggle
+# hyprbend - Automatic screen rotation and virtual keyboard
 # for 2-in-1 laptops running Hyprland
 #
 # Detects laptop/tablet/tent mode via hinge sensor and:
 # - Rotates screen based on accelerometer orientation
-# - Disables/enables keyboard accordingly
+# - Rotates touch input to match
 #
 # Requires: hyprland, iio-sensor-proxy, bash
 
 set -euo pipefail
+# Disable job control so bash never prints "Done <pipeline>" async-job status
+# when the backgrounded monitor-sensor is stopped on Ctrl-C/service restart.
+set +m
 
 # Source shared detection library
 _HYPRBEND_LIB_DIR="${HYPRBEND_LIB_DIR:-/usr/lib/hyprbend}"
@@ -38,28 +41,41 @@ if [[ "${1:-}" =~ ^(check|fix|report)$ ]]; then
     exec "$_BIN" "$@"
 fi
 
-# Thresholds
-TABLET_THRESHOLD=150  # degrees - above this = tablet/tent mode
-LAPTOP_THRESHOLD=30   # degrees - below this = laptop mode
+# Physical reference anchors (deg)
+CLOSED_ANGLE=0        # lid fully closed
+TABLET_ANGLE=360      # lid folded fully back (single flat panel)
+
+# Mode boundary (deg). The hinge channel reports the lid opening angle:
+#   angle <  LAPTOP_TENT_BOUNDARY  -> laptop / normal use
+#   angle >= LAPTOP_TENT_BOUNDARY  -> tent / tablet (lid folded back past flat)
+LAPTOP_TENT_BOUNDARY=180
 DEBOUNCE_DELAY=250    # milliseconds to wait before mode switch
 
 # State
 current_mode="unknown"
-current_transform=-1
+current_transform=""
 monitor_sensor_pid=""
 
 log() {
     echo "[hyprbend] $*" >&2
 }
 
+# Run a hyprctl command and tag any output with [hyprctl] for clean, attributed logs.
+# Captures stdout+stderr; non-empty lines are logged, blank lines are dropped.
+run_hyprctl() {
+    local out line
+    out=$("$@" 2>&1 || true)
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        log "[hyprctl] $line"
+    done <<< "$out"
+}
+
 cleanup() {
     log "Shutting down..."
     stop_orientation_monitor
-    if [[ -n "${KEYBOARD_NAME:-}" ]]; then
-        hyprctl eval "hl.device({ name = \"$KEYBOARD_NAME\", enabled = true })" 2>/dev/null || true
-    fi
     if [[ -n "${TOUCH_DEVICE_NAME:-}" ]]; then
-        hyprctl eval "hl.device({ name = \"$TOUCH_DEVICE_NAME\", transform = 0 })" 2>/dev/null || true
+        run_hyprctl hyprctl eval "hl.device({ name = \"$TOUCH_DEVICE_NAME\", transform = 0 })"
     fi
     exit 0
 }
@@ -79,38 +95,31 @@ detect_hinge_device() {
     return 1
 }
 
-# Auto-detect keyboard angle channel (label: "keyboard")
-detect_keyboard_angle_path() {
+# Auto-detect the hinge/lid angle channel. The meaningful channel is the one
+# labeled "hinge" (the lid opening angle, e.g. ~3 closed, ~106 at 90°, ~131 at
+# tent). The "keyboard" channel on ISH sensors reports the flat keyboard base's
+# angle (~0°) and never tracks the lid, so it must not be used for mode detection.
+detect_hinge_angle_path() {
     local hinge_dev=$1
     for label_file in "$hinge_dev"/in_angl*_label; do
         local label
         label=$(cat "$label_file" 2>/dev/null || echo "")
-        if [[ "$label" == "keyboard" ]]; then
-            local raw_file="${label_file%_label}_raw"
-            echo "$raw_file"
-            return 0
-        fi
-    done
-    return 1
-}
-
-# Auto-detect integrated keyboard name from hyprctl devices
-detect_keyboard_name() {
-    # Get keyboard names, filter out known non-internal keyboards
-    local keyboards
-    keyboards=$(hyprctl devices 2>/dev/null | grep -oP '^\t\t\K[^\t]+(?=\s*$)' || echo "")
-    while IFS= read -r name; do
-        case "$name" in
-            video-bus|intel-hid-*|at-translated-*|hp-wmi-*|hl-virtual-*|python-keyboard)
-                continue
-                ;;
-            *keyboard)
-                # Likely the internal keyboard (ELAN, Synaptics, etc.)
-                echo "$name"
+        case "$label" in
+            hinge|screen)
+                echo "${label_file%_label}_raw"
                 return 0
                 ;;
         esac
-    done <<< "$keyboards"
+    done
+    # Degraded fallback: the "keyboard" channel (matches older/unlabeled sensors).
+    for label_file in "$hinge_dev"/in_angl*_label; do
+        local label
+        label=$(cat "$label_file" 2>/dev/null || echo "")
+        if [[ "$label" == "keyboard" ]]; then
+            echo "${label_file%_label}_raw"
+            return 0
+        fi
+    done
     return 1
 }
 
@@ -153,15 +162,17 @@ detect_touch_device_name() {
 
 # Detect all devices
 HINGE_DEVICE=$(detect_hinge_device) || { log "ERROR: No hinge sensor found"; exit 1; }
-HINGE_ANGLE_PATH=$(detect_keyboard_angle_path "$HINGE_DEVICE") || { log "ERROR: No keyboard angle channel found"; exit 1; }
-KEYBOARD_NAME=$(detect_keyboard_name) || { log "ERROR: No internal keyboard found"; exit 1; }
+HINGE_ANGLE_PATH=$(detect_hinge_angle_path "$HINGE_DEVICE") || { log "ERROR: No hinge angle channel found"; exit 1; }
 MONITOR_OUTPUT=$(detect_monitor_output) || { log "ERROR: No monitor found"; exit 1; }
 TOUCH_DEVICE_NAME=$(detect_touch_device_name) || { log "WARNING: No touch device found, touch rotation disabled"; TOUCH_DEVICE_NAME=""; }
 
+# Query current monitor transform so we don't force an unnecessary reconfiguration on startup.
+# Falls back to "" (unknown) if hyprctl/jq are unavailable, which keeps the rotation eager.
+current_transform=$(hyprctl -j monitors 2>/dev/null | jq -r ".[] | select(.name == \"$MONITOR_OUTPUT\") | .transform" 2>/dev/null || echo "")
+
 log "Detected devices:"
 log "  Hinge device: $HINGE_DEVICE"
-log "  Keyboard angle: $HINGE_ANGLE_PATH"
-log "  Keyboard: $KEYBOARD_NAME"
+log "  Hinge angle: $HINGE_ANGLE_PATH"
 log "  Monitor: $MONITOR_OUTPUT"
 log "  Touch device: ${TOUCH_DEVICE_NAME:-none}"
 
@@ -173,25 +184,42 @@ get_hinge_angle() {
     fi
 }
 
-set_keyboard() {
-    local enabled=$1
-    hyprctl eval "hl.device({ name = \"$KEYBOARD_NAME\", enabled = $enabled })" 2>/dev/null || true
+# Human-readable description of a transform: which screen edge rests on the
+# ground/base. Matches monitor-sensor orientations.
+#   0 normal     -> bottom edge on the base
+#   1 left-up    -> right edge on the base (right points down)
+#   2 bottom-up  -> top edge on the base
+#   3 right-up   -> left edge on the base (left points down)
+transform_desc() {
+    local transform=$1
+    case "$transform" in
+        0) echo "bottom-base" ;;
+        1) echo "right-base" ;;
+        2) echo "top-base" ;;
+        3) echo "left-base" ;;
+        *) echo "transform-$transform" ;;
+    esac
 }
 
 set_rotation() {
     local transform=$1
-    if [[ "$transform" -ne "$current_transform" ]]; then
-        log "Rotation: transform=$transform"
-        hyprctl eval "hl.monitor({ output = \"$MONITOR_OUTPUT\", transform = $transform })" 2>/dev/null || true
+    # If current_transform is unknown (empty), force the rotation through once.
+    if [[ -z "$current_transform" ]] || [[ "$transform" -ne "$current_transform" ]]; then
+        log "Rotation: transform=$transform ($(transform_desc "$transform"))"
+        local batch="eval hl.monitor({ output = \"${MONITOR_OUTPUT}\", transform = ${transform} })"
         if [[ -n "$TOUCH_DEVICE_NAME" ]]; then
-            hyprctl eval "hl.device({ name = \"$TOUCH_DEVICE_NAME\", transform = $transform })" 2>/dev/null || true
+            batch+=" ; eval hl.device({ name = \"${TOUCH_DEVICE_NAME}\", transform = ${transform} })"
         fi
+        run_hyprctl hyprctl --batch "$batch"
         current_transform=$transform
     fi
 }
 
 orientation_monitor() {
-    monitor-sensor --accel 2>&1 | while IFS= read -r line; do
+    # monitor-sensor drives rotation directly; output is consumed here and
+    # nothing raw is echoed. Job control is disabled (set +m at top) so bash
+    # prints no "Done <pipeline>" noise when this job is stopped.
+    monitor-sensor --accel 2>/dev/null | while IFS= read -r line; do
         case "$line" in
             *"normal"*)    set_rotation 0 ;;
             *"left-up"*)   set_rotation 1 ;;
@@ -201,29 +229,34 @@ orientation_monitor() {
     done
 }
 
+# Start the orientation monitor once and leave it running permanently.
+# It is never stopped on mode changes; rotations are gated by set_rotation().
+# It is only torn down when hyprbend itself exits.
 start_orientation_monitor() {
-    stop_orientation_monitor
-    orientation_monitor &
+    orientation_monitor & disown
     monitor_sensor_pid=$!
-    log "Started orientation monitor (PID: $monitor_sensor_pid)"
+    log "Orientation monitor started (PID: $monitor_sensor_pid)"
 }
 
 stop_orientation_monitor() {
-    pkill -f "monitor-sensor --accel" 2>/dev/null || true
-    if [[ -n "$monitor_sensor_pid" ]]; then
-        kill "$monitor_sensor_pid" 2>/dev/null || true
-        wait "$monitor_sensor_pid" 2>/dev/null || true
+    if [[ -n "$monitor_sensor_pid" ]] || pgrep -x monitor-sensor >/dev/null 2>&1; then
+        pkill -x monitor-sensor 2>/dev/null || true
         monitor_sensor_pid=""
+        log "Stopped orientation monitor"
     fi
-    log "Stopped orientation monitor"
 }
 
 switch_to_tablet() {
     if [[ "$current_mode" != "tablet" ]]; then
-        log "Switching to tablet/tent mode"
+        log "Switching to tablet mode"
         current_mode="tablet"
-        set_keyboard false
-        start_orientation_monitor
+    fi
+}
+
+switch_to_tent() {
+    if [[ "$current_mode" != "tent" ]]; then
+        log "Switching to tent mode"
+        current_mode="tent"
     fi
 }
 
@@ -231,8 +264,6 @@ switch_to_laptop() {
     if [[ "$current_mode" != "laptop" ]]; then
         log "Switching to laptop mode"
         current_mode="laptop"
-        set_keyboard true
-        stop_orientation_monitor
         set_rotation 0
     fi
 }
@@ -249,6 +280,9 @@ fi
 # Main loop
 log "Starting hyprbend..."
 
+# Start orientation monitor once; it runs for the lifetime of the service.
+start_orientation_monitor
+
 last_switch_time=$(date +%s%3N)
 
 while true; do
@@ -256,17 +290,23 @@ while true; do
     current_time=$(date +%s%3N)
     time_diff=$((current_time - last_switch_time))
 
-    # Determine mode based on angle
-    if [[ "$angle" -ge "$TABLET_THRESHOLD" ]]; then
-        if [[ "$current_mode" != "tablet" ]] && [[ "$time_diff" -ge "$DEBOUNCE_DELAY" ]]; then
-            switch_to_tablet
-            last_switch_time=$(date +%s%3N)
-        fi
-    elif [[ "$angle" -le "$LAPTOP_THRESHOLD" ]]; then
-        if [[ "$current_mode" != "laptop" ]] && [[ "$time_diff" -ge "$DEBOUNCE_DELAY" ]]; then
-            switch_to_laptop
-            last_switch_time=$(date +%s%3N)
-        fi
+    # Determine mode from angle: laptop < 180, tent < TABLET_ANGLE, else tablet.
+    new_mode=""
+    if [[ "$angle" -ge "$TABLET_ANGLE" ]]; then
+        new_mode="tablet"
+    elif [[ "$angle" -ge "$LAPTOP_TENT_BOUNDARY" ]]; then
+        new_mode="tent"
+    else
+        new_mode="laptop"
+    fi
+
+    if [[ "$new_mode" != "$current_mode" ]] && [[ "$time_diff" -ge "$DEBOUNCE_DELAY" ]]; then
+        case "$new_mode" in
+            tablet) switch_to_tablet ;;
+            tent)   switch_to_tent ;;
+            laptop) switch_to_laptop ;;
+        esac
+        last_switch_time=$(date +%s%3N)
     fi
 
     sleep 0.1  # 10Hz polling

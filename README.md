@@ -1,19 +1,18 @@
 # hyprbend
 
-Automatic screen rotation, keyboard toggle, and virtual keyboard for 2-in-1 laptops running Hyprland.
+Automatic screen rotation and virtual keyboard for 2-in-1 laptops running Hyprland.
 
 Detects laptop/tablet/tent mode via the hinge sensor and automatically:
 - Rotates the screen based on accelerometer orientation
 - Rotates touch input to match
-- Disables/enables the physical keyboard
 
 ## Features
 
-- **Auto-detection**: Hinge sensor, keyboard, touch device, and monitor detected automatically
-- **Mode switching**: Laptop ↔ Tablet/Tent with configurable angle thresholds
+- **Auto-detection**: Hinge sensor, touch device, and monitor detected automatically
+- **Mode switching**: Laptop ↔ Tablet/Tent with configurable angle boundary
 - **Screen rotation**: 0°/90°/180°/270° based on accelerometer
 - **Touch rotation**: Touch input rotates with the screen
-- **Keyboard toggle**: Physical keyboard disabled in tablet/tent mode
+- **Systemd service**: Starts on login, restarts on failure
 - **Systemd service**: Starts on login, restarts on failure
 - **Clean lifecycle**: Auto-start on install, auto-stop on removal
 - **Firmware diagnostics**: Detects Intel ISH / AMD SFH hardware, checks firmware status, offers auto-fix
@@ -77,26 +76,32 @@ hyprbend report > issue.md
 
 ## How It Works
 
-1. **Hinge sensor** (IIO device) provides keyboard angle via `/sys/bus/iio/devices/iio:device*/in_angl*_raw`
-2. **Mode detection**: Angle > 150° = tablet/tent, Angle < 30° = laptop
-3. **Tablet/tent mode**: Disables keyboard, starts `monitor-sensor --accel` for orientation
+1. **Hinge sensor** (IIO device) provides the lid angle via `/sys/bus/iio/devices/iio:device*/in_angl*_raw` (the `hinge` channel)
+2. **Mode detection**: Hinge angle ≥ 180° = tablet/tent, else laptop
+3. **Tablet/tent mode**: Reads `monitor-sensor --accel` orientation (running for the service's lifetime)
 4. **Orientation**: Parses `monitor-sensor` output and calls `hyprctl eval` to rotate monitor + touch device
-5. **Laptop mode**: Enables keyboard, stops orientation monitor, resets rotation
+5. **Laptop mode**: Resets rotation
+
+> **Note on keyboard/touchpad deactivation**: Most 2-in-1s deactivate the built-in keyboard and touchpad at the firmware/kernel level via the Intel HID `SW_TABLET_MODE` switch once the lid passes a vendor-defined angle (typically ~190-200°). hyprbend therefore does **not** disable the keyboard itself — doing so in software does not take effect on these devices and would duplicate the hardware behavior. hyprbend only handles screen + touch rotation.
 
 ## Configuration
 
-Thresholds are defined at the top of the script:
+Mode detection is defined by a single boundary, with reference anchors:
 
 ```bash
-TABLET_THRESHOLD=150  # degrees - above this = tablet/tent mode
-LAPTOP_THRESHOLD=30   # degrees - below this = laptop mode
-DEBOUNCE_DELAY=250    # milliseconds - prevents rapid mode switching
+CLOSED_ANGLE=0          # lid fully closed (reference)
+TABLET_ANGLE=360        # lid folded fully back (reference)
+LAPTOP_TENT_BOUNDARY=180  # degrees - divides laptop from tent/tablet
+DEBOUNCE_DELAY=250      # milliseconds - prevents rapid mode switching
 ```
+
+The hinge channel reports the lid opening angle in degrees:
+- **< 180°** = laptop / normal use (lid at most flat open)
+- **≥ 180°** = tent or tablet (lid folded back past flat)
 
 All hardware devices are auto-detected:
 - Hinge IIO device: scanned from `/sys/bus/iio/devices/*/name`
-- Keyboard angle channel: matched by label "keyboard" in hinge device
-- Internal keyboard: filtered from `hyprctl devices` (excludes video-bus, intel-hid, etc.)
+- Hinge angle channel: matched by label "hinge" (falls back to "screen", then "keyboard") in the hinge device
 - Touch device: from `hyprctl devices` Touch section
 - Monitor: first output from `hyprctl monitors`
 
@@ -135,8 +140,9 @@ This will:
 - **Intel ISH**: Cherry Trail, Gemini Lake, Ice Lake, Tiger Lake, Alder Lake, Raptor Lake, Meteor Lake, Lunar Lake, Panther Lake
 - **AMD SFH**: Kernel-native, no userspace firmware needed
 
-- **Bar flicker on rotation**: Omarchy's bar (quickshell layer surface) briefly disappears during monitor transform changes. This is an upstream Hyprland issue — layer surfaces aren't properly reflowed on transform. See [Hyprland PR #14771](https://github.com/hyprwm/Hyprland/pull/14771) and [omarchy-mac ScreenMoveRemap](https://github.com/omarchy-mac/omarchy-mac/commit/2daeaa7).
-- **wvkbd `--auto` not working yet**: The virtual keyboard's auto-show on text input requires proper `zwp_input_method_v2` integration with Hyprland, which needs further investigation.
+## Known Issues
+
+See [KNOWN_ISSUES.md](KNOWN_ISSUES.md) for known issues and workarounds.
 
 ## Roadmap
 
@@ -148,7 +154,7 @@ This will:
 
 ### Virtual keyboard — Hovering mode
 - Floating keyboard that follows touch position
-- Auto-shows when text field is focused (via `wvkbd --auto` or similar)
+- Auto-shows when a text field is focused
 - Auto-hides after inactivity timeout
 - Draggable, resizable
 
@@ -168,7 +174,7 @@ This will:
 - Stylus/pen support with pressure sensitivity
 - Per-app rotation lock (e.g., never rotate in video players)
 - Hysteresis zone between laptop and tablet thresholds
-- Configuration file for thresholds, device overrides, and keyboard preferences
+- Configuration file for thresholds and device overrides
 
 ## Project Structure
 
@@ -182,6 +188,7 @@ hyprbend/
 ├── hyprbend-detect.sh       # Shared hardware detection library
 ├── hyprbend.service         # Systemd user service
 ├── hyprbend.install         # pacman install hooks
+├── KNOWN_ISSUES.md          # Known issues and workarounds
 └── README.md
 ```
 
