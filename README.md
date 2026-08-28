@@ -1,37 +1,47 @@
-# hyprbend
+<div align="center">
 
-Automatic screen rotation and virtual keyboard for 2-in-1 laptops running Hyprland.
+  <img src="https://github.com/user-attachments/assets/cc44320c-c2b2-4f89-9039-66f44dbf273c" width="600" alt="Hyprbend">
 
-Detects laptop/tablet/tent mode via the hinge sensor and automatically:
-- Rotates the screen based on accelerometer orientation
-- Rotates touch input to match
+  <h3>Seamless 2-in-1 Flexibility for Hyprland</h3>
+
+</div>
+
+<div align="left">
+
+Transform your convertible laptop into a true tablet experience. Designed specifically for **Omarchy Quattro**, **Hyprbend** bridges the gap between hardware and software, bringing native, fluid auto-rotation and orientation handling to 2-in-1 devices running Hyprland.
+
+* **Intelligent Auto-Switching:** Detects hinge angles instantly to toggle seamlessly between laptop, tent, and tablet modes.
+* **Instantaneous Snap-Rotation:** Rotates both your screen and touch input smoothly while suppressing clunky window scaling animations.
+* **Zero-Hassle Diagnostics:** Built-in firmware checks and automated fix utilities get your Intel ISH sensors up and running effortlessly.
+
+> ⚠️ **Disclaimer:** This project is under active development and your specific hardware platform might not be supported yet (currently only tested on the HP OmniBook X Flip Laptop 14-fm0xxx). **Note:** This is an unofficial tool and is not affiliated with or endorsed by Omarchy or Hyprland.
+</div>
+
+---
 
 ## Features
 
 - **Auto-detection**: Hinge sensor, touch device, and monitor detected automatically
-- **Mode switching**: Laptop ↔ Tablet/Tent with configurable angle boundary
-- **Screen rotation**: 0°/90°/180°/270° based on accelerometer
+- **Mode switching**: Laptop ↔ Tent ↔ Tablet with configurable angle boundary
+- **Screen rotation**: 0°/90°/180°/270° based on accelerometer/gyroscope
 - **Touch rotation**: Touch input rotates with the screen
-- **Systemd service**: Starts on login, restarts on failure
-- **Systemd service**: Starts on login, restarts on failure
-- **Clean lifecycle**: Auto-start on install, auto-stop on removal
-- **Firmware diagnostics**: Detects Intel ISH / AMD SFH hardware, checks firmware status, offers auto-fix
-- **Issue reporting**: `hyprbend report` generates copy-paste-ready GitHub issue with full hardware diagnostics
+- **Firmware diagnostics**: Detects Intel ISH, checks firmware status, offers auto-fix (install)
+- **Issue reporting**: Generates copy-paste-ready GitHub issue with full hardware diagnostics to ask for support for your platform hardware (see [Usage](##Usage)). 
 
 ## Requirements
 
 - Hyprland 0.55+ (Lua config)
 - iio-sensor-proxy
 - monitor-sensor (from iio-sensor-proxy)
-- bash
+- This is developed for Omarchy Quattro
 
 ## Installation
 
-### From AUR (recommended)
+Installing this package will:
 
-```bash
-yay -S hyprbend
-```
+- Install a bash service that auto-detects sensors positions and rotates hyprland accordingly.
+- Add an Omarchy plugin for rotating animation. (If you don't care for this, disable it)
+- (Not-Implemented-Yet): ~~Patch Omarchy Quickshell to prevent waybar flickering~~ 
 
 ### Manual build
 
@@ -41,38 +51,40 @@ cd hyprbend
 makepkg -si
 ```
 
-## Usage
-
-The service starts automatically on install. Manage it with:
+### From AUR
 
 ```bash
-# Check status
-systemctl --user status hyprbend
-
-# Restart
-systemctl --user restart hyprbend
-
-# Stop
-systemctl --user stop hyprbend
-
-# View logs
-journalctl --user -u hyprbend -f
+SOON
 ```
 
-### Firmware diagnostics
+## Usage
+
+
+### Firmware diagnostics and installation
 
 ```bash
 # Diagnose sensor and firmware issues
 hyprbend check
 
-# Attempt automatic fixes (prompts for report on failure)
+# Auto-installs firmware for your platform if detected and implemented. (Will need system reboot)
 hyprbend fix
 
-# Generate GitHub issue report (copy-paste into issues)
+# Generate GitHub issue report (copy-paste into issues) to ask for your platform to be supported
 hyprbend report > issue.md
+
 ```
 
-`hyprbend-check`, `hyprbend-fix`, `hyprbend-report` also work as standalone commands.
+### Configuration 
+
+```bash
+# Change configurations (Not-Implemented-Yet)
+```
+
+```bash
+# For watching mode detection logs
+hyprbend 
+```
+
 
 ## How It Works
 
@@ -84,23 +96,6 @@ hyprbend report > issue.md
 
 > **Note on keyboard/touchpad deactivation**: Most 2-in-1s deactivate the built-in keyboard and touchpad at the firmware/kernel level via the Intel HID `SW_TABLET_MODE` switch once the lid passes a vendor-defined angle (typically ~190-200°). hyprbend therefore does **not** disable the keyboard itself — doing so in software does not take effect on these devices and would duplicate the hardware behavior. hyprbend only handles screen + touch rotation.
 
-## Configuration
-
-Mode detection is defined by a single boundary, with reference anchors:
-
-```bash
-CLOSED_ANGLE=0          # lid fully closed (reference)
-TABLET_ANGLE=360        # lid folded fully back (reference)
-LAPTOP_TENT_BOUNDARY=180  # degrees - divides laptop from tent/tablet
-DEBOUNCE_DELAY=250      # milliseconds - prevents rapid mode switching
-SUPPRESS_ANIM_ON_ROTATE=1  # 1 = snap during rotation (no slide/scale); 0 = keep animations
-ROTATE_ANIM_HOLD_MS=1000 # milliseconds - how long animations stay off while the rotation settles
-```
-
-The hinge channel reports the lid opening angle in degrees:
-- **< 180°** = laptop / normal use (lid at most flat open)
-- **≥ 180°** = tent or tablet (lid folded back past flat)
-
 All hardware devices are auto-detected:
 - Hinge IIO device: scanned from `/sys/bus/iio/devices/*/name`
 - Hinge angle channel: matched by label "hinge" (falls back to "screen", then "keyboard") in the hinge device
@@ -108,39 +103,13 @@ All hardware devices are auto-detected:
 - Monitor: first output from `hyprctl monitors`
 
 ## Firmware Troubleshooting
-
+Ideally I'd like this package to support all platforms, please submit an issue with the auto-generated report.
 Many 2-in-1 laptops require specific firmware for the Intel ISH (Integrated Sensor Hub) to enumerate sensor devices. Without the correct firmware, no IIO devices appear and hyprbend cannot detect mode switching.
 
-### Common symptoms
-
-- `ls /sys/bus/iio/devices/` shows no devices
-- `iio-sensor-proxy` fails to start
-- `hyprbend` exits with "No hinge sensor found"
-
-### Quick fix
-
-```bash
-hyprbend fix
-```
-
-This will:
-1. Detect your platform and compute expected firmware filenames (using DMI CRC32 matching)
-2. Check if the firmware exists in `/lib/firmware/intel/ish/`
-3. Attempt `linux-firmware` installation and `fwupd` updates if needed
-4. Print manual instructions for vendor-specific firmware
-5. If auto-fix fails, offer to generate a GitHub issue report with all hardware details
-
-### Manual steps
-
-1. Ensure `linux-firmware` is installed: `sudo pacman -S linux-firmware`
-2. Reboot and check `dmesg | grep -i ISH` for firmware load status
-3. If firmware errors persist, your vendor may provide custom ISH firmware — check their Linux support page or extract from Windows driver packages
-4. Place firmware `.bin` files in `/lib/firmware/intel/ish/` and reboot
 
 ### Supported platforms
 
 - **Intel ISH**: Cherry Trail, Gemini Lake, Ice Lake, Tiger Lake, Alder Lake, Raptor Lake, Meteor Lake, Lunar Lake, Panther Lake
-- **AMD SFH**: Kernel-native, no userspace firmware needed
 
 ## Known Issues
 
@@ -149,22 +118,9 @@ See [KNOWN_ISSUES.md](KNOWN_ISSUES.md) for known issues and workarounds.
 ## Roadmap
 
 ### ~~Auto firmware detection~~ ✓
-- Detect hardware (Intel ISH, AMD SFH) and automatically install correct sensor firmware
-- Support multiple vendors and firmware variants via DMI CRC32 matching
+- Detect hardware (Intel ISH) and automatically install correct sensor firmware. (Only tested with `HP OmniBook X Flip Laptop 14-fm0xxx` ATM)
+- Support multiple vendors and firmware variants via DMI CRC32 matching.
 - Query device DMI and PCI IDs to match firmware blobs
-- `hyprbend report` generates GitHub issue with full hardware diagnostics for platform support requests
-
-### Virtual keyboard — Hovering mode
-- Floating keyboard that follows touch position
-- Auto-shows when a text field is focused
-- Auto-hides after inactivity timeout
-- Draggable, resizable
-
-### Virtual keyboard — Static mode
-- Fixed-position keyboard at bottom of screen
-- Always visible in tablet/tent mode
-- Configurable size and position
-- Toggle visibility with gesture or keybind
 
 ### Virtual keyboard — Split mode
 - Two-panel split keyboard for thumb typing
