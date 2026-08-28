@@ -15,6 +15,7 @@ Transform your convertible laptop into a true tablet experience. Designed specif
 * **Zero-Hassle Diagnostics:** Built-in firmware checks and automated fix utilities get your Intel ISH sensors up and running effortlessly.
 
 > ⚠️ **Disclaimer:** This project is under active development and your specific hardware platform might not be supported yet (currently only tested on the HP OmniBook X Flip Laptop 14-fm0xxx). **Note:** This is an unofficial tool and is not affiliated with or endorsed by Omarchy or Hyprland.
+
 </div>
 
 ---
@@ -26,14 +27,14 @@ Transform your convertible laptop into a true tablet experience. Designed specif
 - **Screen rotation**: 0°/90°/180°/270° based on accelerometer/gyroscope
 - **Touch rotation**: Touch input rotates with the screen
 - **Firmware diagnostics**: Detects Intel ISH, checks firmware status, offers auto-fix (install)
-- **Issue reporting**: Generates copy-paste-ready GitHub issue with full hardware diagnostics to ask for support for your platform hardware (see [Usage](##Usage)). 
+- **Issue reporting**: Generates copy-paste-ready GitHub issue with full hardware diagnostics to ask for support for your platform hardware (see [Usage](#usage)). 
 
 ## Requirements
 
 - Hyprland 0.55+ (Lua config)
 - iio-sensor-proxy
 - monitor-sensor (from iio-sensor-proxy)
-- This is developed for Omarchy Quattro
+- Omarchy Quattro
 
 ## Installation
 
@@ -41,7 +42,6 @@ Installing this package will:
 
 - Install a bash service that auto-detects sensors positions and rotates hyprland accordingly.
 - Add an Omarchy plugin for rotating animation. (If you don't care for this, disable it)
-- (Not-Implemented-Yet): ~~Patch Omarchy Quickshell to prevent waybar flickering~~ 
 
 ### Manual build
 
@@ -53,12 +53,9 @@ makepkg -si
 
 ### From AUR
 
-```bash
-SOON
-```
+*Coming soon! Package will be available as `hyprbend-git`.*
 
 ## Usage
-
 
 ### Firmware diagnostics and installation
 
@@ -71,20 +68,14 @@ hyprbend fix
 
 # Generate GitHub issue report (copy-paste into issues) to ask for your platform to be supported
 hyprbend report > issue.md
-
 ```
 
-### Configuration 
+### Monitoring Logs
 
 ```bash
-# Change configurations (Not-Implemented-Yet)
+# Watch live mode-detection and rotation logs
+hyprbend
 ```
-
-```bash
-# For watching mode detection logs
-hyprbend 
-```
-
 
 ## How It Works
 
@@ -105,7 +96,6 @@ All hardware devices are auto-detected:
 ## Firmware Troubleshooting
 Ideally I'd like this package to support all platforms, please submit an issue with the auto-generated report.
 Many 2-in-1 laptops require specific firmware for the Intel ISH (Integrated Sensor Hub) to enumerate sensor devices. Without the correct firmware, no IIO devices appear and hyprbend cannot detect mode switching.
-
 
 ### Supported platforms
 
