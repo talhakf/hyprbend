@@ -53,9 +53,19 @@ crc32_hex() {
 # gen:        ISH generation from detect_ish_gen()
 # device_ids: space-separated PCI device IDs (hex, no 0x prefix)
 # url:        download URL for the driver package (.exe)
-# fw_glob:    glob for firmware inside IshHeciExtensionTemplate/FWImage/0003/
+# fw_glob:    glob for firmware inside extracted package
+#
+# Only Lunar Lake and newer use host-side firmware loading.
+# Pre-LNL platforms (RPL, MTL, ARL, etc.) have firmware in BIOS — no .bin needed.
 FIRMWARE_TABLE=(
+    # Lunar Lake (lnlm) — host-side firmware loading
+    # SP172806 ships ishS_SI_5.8.0.7718.bin (~645 KB) with hinge + accel sensors.
+    # Do NOT use sp173552's Chiharu variant — it lacks the hinge/accelerometer.
     "hp|lnlm|a825 a828 a845|https://ftp.hp.com/pub/softpaq/sp172501-173000/sp172806.exe|ishS*.bin"
+    # Panther Lake (ptl) — host-side firmware loading
+    "hp|ptl|e825 e828 e345 e445|https://ftp.hp.com/pub/softpaq/sp172001-172500/sp172141.exe|ishC_SI_*.bin"
+    # Nova Lake (nvl) — host-side firmware loading
+    "hp|nvl|4d45|https://ftp.hp.com/pub/softpaq/sp173001-173500/sp173468.exe|ishC_SI_*.bin"
     # Samsung Galaxy Book5 — source: https://dnsense.pub/posts/9-book5-sensor-hub/
     # "samsung|lnlm|a825 a828 a845|<url>|ishS*.bin"
     # ASUS Zenbook S14 — source: https://github.com/dantmnf/zenbook-s14-ux5406sa-linux
@@ -173,15 +183,17 @@ detect_ish_gen() {
         # Alder Lake
         "54e3"|"54e1") echo "adl" ;;
         # Raptor Lake
-        "7ae0"|"7ade") echo "rpl" ;;
+        "7ae0"|"7ade"|"7af8"|"51fc"|"7a78"|"54fc") echo "rpl" ;;
         # Meteor Lake
-        "7e01"|"7e03") echo "mtl" ;;
+        "7e01"|"7e03"|"7e45") echo "mtl" ;;
         # Lunar Lake
         "a825"|"a828"|"a845") echo "lnlm" ;;
         # Panther Lake
-        "e825"|"e828") echo "ptl" ;;
+        "e825"|"e828"|"e345"|"e445") echo "ptl" ;;
         # Arrow Lake
-        "b825"|"b828") echo "arl" ;;
+        "b825"|"b828"|"7745"|"7f78") echo "arl" ;;
+        # Nova Lake
+        "4d45") echo "nvl" ;;
         # Unknown — return raw device ID as fallback
         *) echo "$device_id" ;;
     esac

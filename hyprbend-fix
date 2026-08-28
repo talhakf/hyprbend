@@ -105,20 +105,14 @@ install_ish_firmware() {
         return 1
     }
 
-    # Find firmware file — search in IshHeciExtensionTemplate/FWImage/0003/ first,
-    # then fall back to any IshHeciExtensionTemplate/**/ path
+    # Find firmware file — search for .bin in IshHeciExtensionTemplate/ (case-insensitive)
+    # Handles all directory variations: FWImage vs FwImage, Driver vs driver, with/without x64/
     local fw_src=""
-    fw_src=$(find extracted -path "*/IshHeciExtensionTemplate/FWImage/0003/${FIRMWARE_FW_PATTERN}" -type f 2>/dev/null | head -1 || echo "")
-    if [[ -z "$fw_src" ]]; then
-        fw_src=$(find extracted -path "*/IshHeciExtensionTemplate/*/${FIRMWARE_FW_PATTERN}" -type f 2>/dev/null | head -1 || echo "")
-    fi
-    if [[ -z "$fw_src" ]]; then
-        fw_src=$(find extracted -name "${FIRMWARE_FW_PATTERN}" -path "*/FWImage/*" -type f 2>/dev/null | head -1 || echo "")
-    fi
+    fw_src=$(find extracted -ipath "*/IshHeciExtensionTemplate/*" -iname "*.bin" -type f 2>/dev/null | head -1 || echo "")
 
     if [[ -z "$fw_src" || ! -f "$fw_src" ]]; then
-        fail "Firmware matching '${FIRMWARE_FW_PATTERN}' not found in package."
-        info "Expected in: IshHeciExtensionTemplate/FWImage/0003/"
+        fail "Firmware .bin not found in IshHeciExtensionTemplate/ inside package."
+        info "Expected: IshHeciExtensionTemplate/<arch>/FwImage/<variant>/*.bin"
         fail "Check your vendor's ISH driver package."
         rm -rf "$work_dir"
         return 1
@@ -201,7 +195,31 @@ fix_firmware() {
         return
     fi
 
-    # Firmware is missing — try fwupd
+    # Firmware is missing — determine fix path by platform
+    local gen sys_vendor
+    gen=$(detect_ish_gen) || gen=""
+    sys_vendor=$(read_dmi sys_vendor)
+
+    # Pre-LNL platforms: firmware is in BIOS, cannot be loaded from host
+    case "$gen" in
+        lnlm|ptl|nvl)
+            # These platforms use host-side firmware loading — continue below
+            ;;
+        *)
+            # Firmware is embedded in BIOS — no host-side loading possible
+            header "ISH Firmware (BIOS-embedded)"
+            info "Platform: ${sys_vendor} (ISH gen: ${gen:-unknown})"
+            info "Pre-Lunar Lake ISH loads firmware from BIOS/UEFI, not from the OS."
+            info "If sensors are not working, update your BIOS/UEFI firmware:"
+            info "  1. Check ${sys_vendor} support page for BIOS updates"
+            info "  2. Or run: sudo fwupdmgr update (if BIOS updates are available)"
+            info "HP softpaq .bin files cannot be used on this platform."
+            echo "$changes"
+            return
+            ;;
+    esac
+
+    # LNL/PTL/NVL — try fwupd
     if command -v fwupdmgr &>/dev/null; then
         info "Attempting firmware update via fwupd..."
         if sudo fwupdmgr refresh --force 2>/dev/null && sudo fwupdmgr get-updates 2>/dev/null; then
@@ -220,24 +238,20 @@ fix_firmware() {
         warn "fwupd not installed"
     fi
 
-    # Try firmware resolver
+    # Try HP softpaq extraction
     if install_ish_firmware; then
         changes=$((changes + 1))
     else
-        # No resolver — manual instructions
-        local gen sys_vendor
-        gen=$(detect_ish_gen)
-        sys_vendor=$(read_dmi sys_vendor)
-
+        # No resolver — platform-aware manual instructions
         header "Manual Firmware Instructions"
-        info "Your device: ${sys_vendor} (ISH gen: ${gen})"
+        info "Device: ${sys_vendor} (ISH gen: ${gen})"
         echo ""
-        info "Vendor-specific ISH firmware may be needed. Try:"
-        info "  1. Check your vendor's Linux support page"
-        info "  2. Extract firmware from Windows ISH driver packages"
-        info "     (look for 'IshHeciExtensionTemplate' directory)"
-        info "  3. Place the .bin file in /lib/firmware/intel/ish/"
-        info "  4. Rebuild initramfs and reboot"
+        info "Extract firmware from HP softpaq:"
+        info "  1. Download the softpaq .exe from HP support"
+        info "  2. Extract: 7z x -y sp<XXXXX>.exe -oextracted"
+        info "  3. Find:    find extracted/ -ipath '*/IshHeciExtensionTemplate/*' -iname '*.bin'"
+        info "  4. Install: sudo cp <found>.bin /lib/firmware/intel/ish/ish_${gen}.bin"
+        info "  5. Rebuild initramfs and reboot"
         echo ""
         info "Reference: https://docs.kernel.org/hid/intel-ish-hid.html"
     fi
