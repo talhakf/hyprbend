@@ -206,6 +206,31 @@ set_rotation() {
     # If current_transform is unknown (empty), force the rotation through once.
     if [[ -z "$current_transform" ]] || [[ "$transform" -ne "$current_transform" ]]; then
         log "Rotation: transform=$transform ($(transform_desc "$transform"))"
+
+        # Map old/new transforms to compass sides for the bedding overlay.
+        # Canonically 0:bottom, 1:right, 2:top, 3:left
+        # but we will need to rotate current_transform to accomodate the rotated canvas perspective 
+        local -a side_map=("bottom" "right" "top" "left")
+        # In case current_transform is not valid
+        local from_side="bottom"
+        # From the rotated canvas perspective we always animate towards bottom edge
+        local to_side="bottom"
+        
+        if [[ -n "$current_transform" ]]; then
+            # the canvas will be rotated, so current_transform must be rotated so that it references 
+            # the proper edge from the rotated canvas perspective
+            current_transform=$(( (current_transform - transform + 4) % 4 ))
+            from_side="${side_map[$current_transform]}"
+        fi
+        
+        # Summon the bedding overlay (fire-and-forget, non-blocking).
+        OMARCHY_PATH=/usr/share/omarchy omarchy-shell shell summon hyprbend.rotation \
+            "{\"from\":\"$from_side\",\"to\":\"$to_side\",\"transform\":$transform,\"duration\":900}" \
+            >/dev/null 2>&1 &
+
+        # Wait a beat for the overlay to paint, then rotate.
+        sleep 0.13
+
         local batch="eval hl.monitor({ output = \"${MONITOR_OUTPUT}\", transform = ${transform} })"
         if [[ -n "$TOUCH_DEVICE_NAME" ]]; then
             batch+=" ; eval hl.device({ name = \"${TOUCH_DEVICE_NAME}\", transform = ${transform} })"

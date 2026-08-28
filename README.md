@@ -79,7 +79,7 @@ hyprbend report > issue.md
 1. **Hinge sensor** (IIO device) provides the lid angle via `/sys/bus/iio/devices/iio:device*/in_angl*_raw` (the `hinge` channel)
 2. **Mode detection**: Hinge angle ≥ 180° = tablet/tent, else laptop
 3. **Tablet/tent mode**: Reads `monitor-sensor --accel` orientation (running for the service's lifetime)
-4. **Orientation**: Parses `monitor-sensor` output and calls `hyprctl eval` to rotate monitor + touch device
+4. **Orientation**: Parses `monitor-sensor` output and calls `hyprctl eval` to rotate monitor + touch device. While the transform is applied, Hyprland's animations (`global`) are suppressed for a short window so windows and the background **snap** to the new aspect instead of sliding/scaling; the exact animation specs are restored right after (`SUPPRESS_ANIM_ON_ROTATE`, see Configuration)
 5. **Laptop mode**: Resets rotation
 
 > **Note on keyboard/touchpad deactivation**: Most 2-in-1s deactivate the built-in keyboard and touchpad at the firmware/kernel level via the Intel HID `SW_TABLET_MODE` switch once the lid passes a vendor-defined angle (typically ~190-200°). hyprbend therefore does **not** disable the keyboard itself — doing so in software does not take effect on these devices and would duplicate the hardware behavior. hyprbend only handles screen + touch rotation.
@@ -93,6 +93,8 @@ CLOSED_ANGLE=0          # lid fully closed (reference)
 TABLET_ANGLE=360        # lid folded fully back (reference)
 LAPTOP_TENT_BOUNDARY=180  # degrees - divides laptop from tent/tablet
 DEBOUNCE_DELAY=250      # milliseconds - prevents rapid mode switching
+SUPPRESS_ANIM_ON_ROTATE=1  # 1 = snap during rotation (no slide/scale); 0 = keep animations
+ROTATE_ANIM_HOLD_MS=1000 # milliseconds - how long animations stay off while the rotation settles
 ```
 
 The hinge channel reports the lid opening angle in degrees:

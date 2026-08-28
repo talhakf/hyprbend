@@ -1,7 +1,7 @@
 # Maintainer: kosmosys
 pkgname=hyprbend
 pkgver=0.1.0
-pkgrel=5
+pkgrel=9
 pkgdesc="Automatic screen rotation and virtual keyboard for 2-in-1 laptops on Hyprland"
 arch=('any')
 url="https://github.com/kosmosys/hyprbend"
