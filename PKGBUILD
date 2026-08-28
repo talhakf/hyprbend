@@ -8,8 +8,8 @@ url="https://github.com/kosmosys/hyprbend"
 license=('MIT')
 depends=('hyprland' 'iio-sensor-proxy' 'bash' '7zip' 'curl' 'jq')
 makedepends=()
-source=('hyprbend' 'hyprbend-check' 'hyprbend-fix' 'hyprbend-report' 'hyprbend-detect.sh' 'hyprbend.service' 'KNOWN_ISSUES.md')
-sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+source=('hyprbend' 'hyprbend-check' 'hyprbend-fix' 'hyprbend-report' 'hyprbend-detect.sh' 'hyprbend.service' 'KNOWN_ISSUES.md' "Hyprbend.qml::file://$startdir/omarchy-plugin/Hyprbend.qml" "manifest.json::file://$startdir/omarchy-plugin/manifest.json")
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
 install=hyprbend.install
 
 package() {
@@ -33,4 +33,8 @@ package() {
 
     # Install documentation
     install -Dm644 "$srcdir/KNOWN_ISSUES.md" "$pkgdir/usr/share/doc/hyprbend/KNOWN_ISSUES.md"
+
+    # Install omarchy plugin source (consumed by hyprbend.install via omarchy plugin add)
+    install -Dm644 "$srcdir/Hyprbend.qml"  "$pkgdir/usr/share/hyprbend/omarchy-plugin/Hyprbend.qml"
+    install -Dm644 "$srcdir/manifest.json" "$pkgdir/usr/share/hyprbend/omarchy-plugin/manifest.json"
 }

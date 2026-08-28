@@ -1,3 +1,6 @@
+PLUGIN_ID="hyprbend.rotation"
+PLUGIN_SRC="/usr/share/hyprbend/omarchy-plugin"
+
 restart_user_service() {
     for uid_dir in /run/user/[0-9]*; do
         local uid="${uid_dir##*/}"
@@ -18,19 +21,55 @@ stop_user_service() {
     done
 }
 
+plugin_add_for_users() {
+    for uid_dir in /run/user/[0-9]*; do
+        local uid="${uid_dir##*/}"
+        local user tmp
+        user=$(getent passwd "$uid" 2>/dev/null | cut -d: -f1) || continue
+
+        tmp=$(mktemp -d)
+        cp -a "$PLUGIN_SRC/." "$tmp/"
+        git -C "$tmp" init -q
+        git -C "$tmp" -c user.email="hyprbend@local" -c user.name="hyprbend" add -A
+        git -C "$tmp" -c user.email="hyprbend@local" -c user.name="hyprbend" commit -q -m "hyprbend plugin"
+        chown -R "$user:$user" "$tmp"
+
+        runuser -l "$user" -c \
+            "XDG_RUNTIME_DIR='$uid_dir' DBUS_SESSION_BUS_ADDRESS='unix:path=$uid_dir/bus' omarchy plugin add '$tmp' --enable --yes" \
+            >>/tmp/hyprbend-install.log 2>&1 || true
+
+        rm -rf "$tmp"
+    done
+}
+
+plugin_remove_for_users() {
+    for uid_dir in /run/user/[0-9]*; do
+        local uid="${uid_dir##*/}"
+        local user
+        user=$(getent passwd "$uid" 2>/dev/null | cut -d: -f1) || continue
+
+        runuser -l "$user" -c \
+            "XDG_RUNTIME_DIR='$uid_dir' DBUS_SESSION_BUS_ADDRESS='unix:path=$uid_dir/bus' omarchy plugin remove '$PLUGIN_ID' --yes" \
+            >>/tmp/hyprbend-remove.log 2>&1 || true
+    done
+}
+
 post_install() {
     systemctl --global enable hyprbend.service 2>/dev/null || true
     restart_user_service
+    plugin_add_for_users
     echo "hyprbend installed and started."
 }
 
 post_upgrade() {
     restart_user_service
+    plugin_add_for_users
     echo "hyprbend upgraded and restarted."
 }
 
 pre_remove() {
     stop_user_service
+    plugin_remove_for_users
 }
 
 post_remove() {

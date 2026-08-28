@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "hyprbend.rotation",
+  "name": "Hyprbend bedding",
+  "version": "1.0.0",
+  "description": "Fullscreen black bedding overlay with colors flowing toward the new bottom edge during display rotation.",
+  "kinds": [
+    "overlay"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "overlay": "Hyprbend.qml"
+  }
+}
