@@ -181,9 +181,9 @@ detect_ish_gen() {
         # Tiger Lake
         "a0a3"|"a0a1") echo "tgl" ;;
         # Alder Lake
-        "54e3"|"54e1") echo "adl" ;;
+        "54e3"|"54e1"|"51fc"|"54fc") echo "adl" ;;
         # Raptor Lake
-        "7ae0"|"7ade"|"7af8"|"51fc"|"7a78"|"54fc") echo "rpl" ;;
+        "7ae0"|"7ade"|"7af8"|"7a78") echo "rpl" ;;
         # Meteor Lake
         "7e01"|"7e03"|"7e45") echo "mtl" ;;
         # Lunar Lake
@@ -196,6 +196,16 @@ detect_ish_gen() {
         "4d45") echo "nvl" ;;
         # Unknown — return raw device ID as fallback
         *) echo "$device_id" ;;
+    esac
+}
+
+# Returns 0 if the given ISH generation stores its firmware in BIOS/ROM
+# rather than loading host-side .bin files from /lib/firmware/intel/ish/
+ish_uses_bios_firmware() {
+    local gen="${1:-$(detect_ish_gen)}"
+    case "$gen" in
+        ct|glk|icl|tgl|adl|rpl|mtl|arl) return 0 ;;
+        *) return 1 ;;
     esac
 }
 
