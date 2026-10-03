@@ -109,6 +109,15 @@ report_firmware() {
 
     check_ish_firmware || { fail "Cannot compute firmware names (unknown ISH generation)"; return; }
 
+    local gen
+    gen=$(detect_ish_gen)
+
+    if ish_uses_bios_firmware "$gen" && check_sensors_present && ! check_dmesg_ish_errors; then
+        pass "BIOS-embedded ISH firmware active (generation: ${gen} — no host .bin file required)"
+        pass "No ISH errors in dmesg"
+        return
+    fi
+
     local fw_dir="/lib/firmware/intel/ish"
     local found_any=false
     local found_specific=false
