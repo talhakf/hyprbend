@@ -181,6 +181,7 @@ report_iio() {
     local count=0
     local has_hinge=false
     local has_accel=false
+    local hinge_path=""
 
     while IFS=' ' read -r name path; do
         count=$((count + 1))
@@ -188,6 +189,7 @@ report_iio() {
             hinge)
                 pass "Hinge sensor: ${path}"
                 has_hinge=true
+                hinge_path="$path"
                 ;;
             accel*|bma250e|bmc150|bmi*)
                 pass "Accelerometer: ${name} (${path})"
@@ -205,11 +207,36 @@ report_iio() {
         return 1
     fi
 
+    local dual_accels=""
+    dual_accels=$(detect_dual_accel_devices 2>/dev/null || echo "")
+    if [[ -n "$dual_accels" ]]; then
+        local s_dev b_dev calc_angle
+        read -r s_dev b_dev <<< "$dual_accels"
+        calc_angle=$(compute_dual_accel_hinge_angle "$s_dev" "$b_dev" || echo "portrait/vertical")
+        pass "Dual 3D accelerometers (${s_dev##*/} + ${b_dev##*/}) — calculated hinge angle: ${calc_angle}°"
+    fi
+
+    local sw_name=""
+    sw_name=$(detect_tablet_mode_switch 2>/dev/null || echo "")
+    if [[ -n "$sw_name" ]]; then
+        pass "Tablet mode switch: ${sw_name}"
+    fi
+
     if $has_hinge; then
-        pass "Hinge sensor present — hyprbend will work"
+        local raw_hinge="0"
+        [[ -f "${hinge_path}/in_angl0_raw" ]] && raw_hinge=$(cat "${hinge_path}/in_angl0_raw" 2>/dev/null || echo "0")
+        if [[ "$raw_hinge" != "0" ]]; then
+            pass "Hinge sensor active (raw angle: ${raw_hinge}°) — hyprbend will work"
+        elif [[ -n "$dual_accels" ]]; then
+            pass "Hinge sensor reports 0°; using dual-accelerometer hinge calculation — hyprbend will work"
+        else
+            warn "Hinge sensor present but reports 0°"
+        fi
+    elif [[ -n "$dual_accels" ]]; then
+        pass "Dual accelerometers present — hyprbend will work"
     elif $has_accel; then
-        warn "Accelerometer found but no hinge sensor"
-        info "hyprbend uses the hinge sensor for laptop/tablet mode detection"
+        warn "Single accelerometer found but no hinge sensor"
+        info "hyprbend uses hinge/dual-accel/tablet-switch for laptop/tablet mode detection"
     else
         fail "No hinge or accelerometer found among ${count} IIO device(s)"
         return 1
@@ -225,16 +252,14 @@ report_services() {
     if check_iio_sensor_proxy; then
         pass "iio-sensor-proxy is running"
     else
-        warn "iio-sensor-proxy is not running"
-        info "Start it: systemctl start iio-sensor-proxy"
+        info "iio-sensor-proxy is not running (direct IIO accelerometer fallback will be used)"
     fi
 
     # monitor-sensor
     if check_monitor_sensor; then
         pass "monitor-sensor is available"
     else
-        warn "monitor-sensor not found"
-        info "It comes with iio-sensor-proxy: sudo pacman -S iio-sensor-proxy"
+        info "monitor-sensor not installed (optional — hyprbend has built-in direct IIO orientation polling)"
     fi
 
     # hyprland
@@ -242,21 +267,6 @@ report_services() {
         pass "hyprctl is available"
     else
         fail "hyprctl not found — is Hyprland installed?"
-    fi
-
-    # Dependencies check
-    local missing=()
-    for dep in hyprctl monitor-sensor; do
-        command -v "$dep" &>/dev/null || missing+=("$dep")
-    done
-    if systemctl list-unit-files iio-sensor-proxy.service &>/dev/null 2>&1; then
-        :
-    else
-        missing+=("iio-sensor-proxy")
-    fi
-
-    if [[ ${#missing[@]} -gt 0 ]]; then
-        fail "Missing: ${missing[*]}"
     fi
 }
 
