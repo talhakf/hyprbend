@@ -278,6 +278,65 @@ enumerate_iio_devices() {
     done
 }
 
+# Detects dual 3D accelerometers (lid/screen + keyboard/base, e.g. Lenovo IdeaPad Flex / Yoga)
+# Echoes "<screen_dev> <base_dev>" and returns 0 if at least two 3D accelerometers exist.
+detect_dual_accel_devices() {
+    local -a accels=()
+    for dev in /sys/bus/iio/devices/iio:device*; do
+        [[ -d "$dev" ]] || continue
+        if [[ -f "$dev/in_accel_x_raw" && -f "$dev/in_accel_y_raw" && -f "$dev/in_accel_z_raw" ]]; then
+            accels+=("$dev")
+        fi
+    done
+    if (( ${#accels[@]} >= 2 )); then
+        echo "${accels[0]} ${accels[1]}"
+        return 0
+    fi
+    return 1
+}
+
+# Computes the hinge angle (0..359 deg) from two 3D accelerometers (screen + base)
+# rotating around the shared X hinge axis.
+# Returns non-zero if the device is held nearly vertically in portrait orientation
+# (where gravity is parallel to the X hinge axis and YZ plane projection is too small).
+compute_dual_accel_hinge_angle() {
+    local screen_dev=$1
+    local base_dev=$2
+    [[ -f "$screen_dev/in_accel_y_raw" && -f "$base_dev/in_accel_y_raw" ]] || return 1
+
+    awk -v s="$screen_dev" -v b="$base_dev" '
+    BEGIN {
+        if ((getline y0 < (s "/in_accel_y_raw")) <= 0) exit 1
+        if ((getline z0 < (s "/in_accel_z_raw")) <= 0) exit 1
+        if ((getline y1 < (b "/in_accel_y_raw")) <= 0) exit 1
+        if ((getline z1 < (b "/in_accel_z_raw")) <= 0) exit 1
+
+        # Require sufficient gravity projection in the YZ plane (~2.5 m/s^2 at scale 9.8e-6)
+        r0 = sqrt(y0*y0 + z0*z0)
+        r1 = sqrt(y1*y1 + z1*z1)
+        if (r0 < 250000 || r1 < 250000) exit 2
+
+        pi = atan2(0, -1)
+        a0 = atan2(y0, z0) * 180.0 / pi
+        a1 = atan2(y1, z1) * 180.0 / pi
+        ang = a1 - a0 - 180.0
+        while (ang < 0) ang += 360.0
+        while (ang >= 360.0) ang -= 360.0
+        printf "%d\n", int(ang + 0.5)
+    }' 2>/dev/null
+}
+
+# Detects a kernel tablet-mode switch (e.g. "Lenovo Yoga Tablet Mode Control switch")
+detect_tablet_mode_switch() {
+    local name
+    name=$(hyprctl -j devices 2>/dev/null | jq -r '.switches[]?.name // empty' 2>/dev/null | grep -i 'tablet mode' | head -1 || echo "")
+    if [[ -n "$name" ]]; then
+        echo "$name"
+        return 0
+    fi
+    return 1
+}
+
 # Returns 0 if hinge or accelerometer IIO device is present
 check_sensors_present() {
     for dev in /sys/bus/iio/devices/iio:device*; do
