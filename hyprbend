@@ -421,29 +421,113 @@ start_orientation_monitor
 last_switch_time=${EPOCHREALTIME/./}
 last_switch_time=${last_switch_time:0:13}
 
+# If python3 is available and we are using direct IIO polling, run a single zero-fork
+# sensor polling stream so we don't spawn subshells/awk processes 10 times per second.
+if [[ -z "$MONITOR_FD" ]] && command -v python3 &>/dev/null; then
+    exec 4< <(python3 -u - "$HINGE_ANGLE_PATH" "$ACCEL_SCREEN_DEV" "$ACCEL_BASE_DEV" <<'PYEOF'
+import math, sys, time, glob
+
+hinge_path, screen_dev, base_dev = sys.argv[1], sys.argv[2], sys.argv[3]
+last_angle = 90
+last_orient = 0
+prev_emitted = None
+
+def read_int(path):
+    try:
+        with open(path, "r") as f:
+            return int(f.read().strip())
+    except Exception:
+        return None
+
+def lid_closed():
+    for p in glob.glob("/proc/acpi/button/lid/*/state"):
+        try:
+            with open(p, "r") as f:
+                if "closed" in f.read().lower():
+                    return True
+        except Exception:
+            pass
+    return False
+
+while True:
+    # 1. Hinge angle
+    angle = None
+    if hinge_path:
+        raw = read_int(hinge_path)
+        if raw is not None and raw != 0:
+            angle = raw
+
+    if angle is None and screen_dev and base_dev:
+        y0 = read_int(f"{screen_dev}/in_accel_y_raw")
+        z0 = read_int(f"{screen_dev}/in_accel_z_raw")
+        y1 = read_int(f"{base_dev}/in_accel_y_raw")
+        z1 = read_int(f"{base_dev}/in_accel_z_raw")
+        if None not in (y0, z0, y1, z1):
+            r0 = math.hypot(y0, z0)
+            r1 = math.hypot(y1, z1)
+            if r0 >= 250000 and r1 >= 250000:
+                a0 = math.degrees(math.atan2(y0, z0))
+                a1 = math.degrees(math.atan2(y1, z1))
+                calc = int((a1 - a0 - 180.0) % 360.0 + 0.5) % 360
+                if calc < 25 and last_angle >= 180 and not lid_closed():
+                    calc = 360
+                angle = calc
+
+    if angle is not None:
+        last_angle = angle
+    else:
+        angle = last_angle
+
+    # 2. Screen orientation
+    if screen_dev:
+        x = read_int(f"{screen_dev}/in_accel_x_raw")
+        y = read_int(f"{screen_dev}/in_accel_y_raw")
+        if x is not None and y is not None:
+            ax, ay = abs(x), abs(y)
+            if ay > 450000 and ay > ax * 1.35:
+                last_orient = 0 if y < 0 else 2
+            elif ax > 450000 and ax > ay * 1.35:
+                last_orient = 1 if x > 0 else 3
+
+    print(f"{angle} {last_orient}", flush=True)
+    time.sleep(0.1)
+PYEOF
+    )
+    monitor_sensor_pid=$!
+    MONITOR_FD=4
+fi
+
 while true; do
-    # 1. Read orientation updates (either from monitor-sensor FD or direct IIO accelerometer)
-    if [[ -n "$MONITOR_FD" ]]; then
-        if IFS= read -r -t 0.1 -u 3 line; then
-            case "$line" in
-                *"normal"*)    apply_orientation_if_allowed 0 ;;
-                *"left-up"*)   apply_orientation_if_allowed 1 ;;
-                *"bottom-up"*) apply_orientation_if_allowed 2 ;;
-                *"right-up"*)  apply_orientation_if_allowed 3 ;;
-            esac
+    if [[ "$MONITOR_FD" == "4" ]]; then
+        IFS=' ' read -r angle new_orient <&4 || break
+        last_valid_angle="$angle"
+        if [[ -n "$new_orient" && "$new_orient" != "$last_sensor_transform" ]]; then
+            apply_orientation_if_allowed "$new_orient"
         fi
     else
-        if new_orient=$(poll_direct_accel_orientation); then
-            if [[ -n "$new_orient" && "$new_orient" != "$last_sensor_transform" ]]; then
-                apply_orientation_if_allowed "$new_orient"
+        # 1. Read orientation updates (either from monitor-sensor FD or direct IIO accelerometer)
+        if [[ -n "$MONITOR_FD" ]]; then
+            if IFS= read -r -t 0.1 -u 3 line; then
+                case "$line" in
+                    *"normal"*)    apply_orientation_if_allowed 0 ;;
+                    *"left-up"*)   apply_orientation_if_allowed 1 ;;
+                    *"bottom-up"*) apply_orientation_if_allowed 2 ;;
+                    *"right-up"*)  apply_orientation_if_allowed 3 ;;
+                esac
             fi
+        else
+            if new_orient=$(poll_direct_accel_orientation); then
+                if [[ -n "$new_orient" && "$new_orient" != "$last_sensor_transform" ]]; then
+                    apply_orientation_if_allowed "$new_orient"
+                fi
+            fi
+            sleep 0.1
         fi
-        sleep 0.1
-    fi
 
-    # 2. Read hinge angle and update laptop / tent / tablet mode
-    angle=$(get_hinge_angle "$last_valid_angle")
-    last_valid_angle="$angle"
+        # 2. Read hinge angle and update laptop / tent / tablet mode
+        angle=$(get_hinge_angle "$last_valid_angle")
+        last_valid_angle="$angle"
+    fi
 
     current_time=${EPOCHREALTIME/./}
     current_time=${current_time:0:13}
