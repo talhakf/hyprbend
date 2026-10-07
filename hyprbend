@@ -53,7 +53,7 @@ CLOSED_ANGLE=0                            # lid fully closed
 LAPTOP_TENT_BOUNDARY="${LAPTOP_TENT_BOUNDARY:-180}" # < 180 = laptop, >= 180 = tent/tablet
 TABLET_ANGLE="${TABLET_ANGLE:-310}"       # >= 310 = tablet (lid folded fully back)
 DEBOUNCE_DELAY="${DEBOUNCE_DELAY:-250}"   # milliseconds to wait before mode switch
-ROTATE_IN_LAPTOP_MODE="${ROTATE_IN_LAPTOP_MODE:-1}" # 0 = only auto-rotate in tent/tablet mode; 1 = always
+ROTATE_IN_LAPTOP_MODE="${ROTATE_IN_LAPTOP_MODE:-0}" # 0 = only auto-rotate in tent/tablet mode; 1 = always
 
 # State
 current_mode="unknown"
