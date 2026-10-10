@@ -28,7 +28,7 @@ Item {
   readonly property int keySpacing: 6
   readonly property int rowSpacing: 6
   readonly property int outerPad: 10
-  readonly property int splitGap: 0
+  readonly property int splitGap: splitMode ? Math.min(260, Math.round(width * 0.22)) : 0
 
   signal requestClose()
   signal requestOpen()
