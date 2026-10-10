@@ -322,7 +322,9 @@ Item {
         if (!pressed) return
         var curY = mapToItem(kbdRoot, 0, mouse.y).y
         var dy = curY - startGlobalY
-        if (dy < -14) kbdRoot.requestOpen()
+        if (dy < 0) {
+          kbdRoot.slideOffset = Math.max(0, Math.min(kbdRoot.panelHeight, kbdRoot.panelHeight + dy))
+        }
       }
 
       onReleased: function(mouse) {
