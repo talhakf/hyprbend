@@ -27,7 +27,22 @@ for _detect_candidate in \
     fi
 done
 
-# Subcommand dispatch: hyprbend check|fix|report
+# Subcommand dispatch: hyprbend check|fix|report|keyboard
+if [[ "${1:-}" == "keyboard" ]]; then
+    shift
+    _kact="${1:-toggle}"
+    case "$_kact" in
+        open)   exec omarchy-shell hyprbend openKeyboard ;;
+        close)  exec omarchy-shell hyprbend closeKeyboard ;;
+        toggle) exec omarchy-shell hyprbend toggleKeyboard ;;
+        state)  exec omarchy-shell hyprbend keyboardState ;;
+        *)
+            echo "Usage: hyprbend keyboard [open|close|toggle|state]" >&2
+            exit 1
+            ;;
+    esac
+fi
+
 if [[ "${1:-}" =~ ^(check|fix|report)$ ]]; then
     _subcmd="${BASH_REMATCH[1]}"
     shift
@@ -382,6 +397,7 @@ switch_to_tablet() {
     if [[ "$current_mode" != "tablet" ]]; then
         log "Switching to tablet mode (angle=${angle}°)"
         current_mode="tablet"
+        OMARCHY_PATH=/usr/share/omarchy omarchy-shell -q hyprbend setMode tablet >/dev/null 2>&1 &
         set_rotation "$last_sensor_transform"
     fi
 }
@@ -390,6 +406,7 @@ switch_to_tent() {
     if [[ "$current_mode" != "tent" ]]; then
         log "Switching to tent mode (angle=${angle}°)"
         current_mode="tent"
+        OMARCHY_PATH=/usr/share/omarchy omarchy-shell -q hyprbend setMode tent >/dev/null 2>&1 &
         set_rotation "$last_sensor_transform"
     fi
 }
@@ -398,6 +415,7 @@ switch_to_laptop() {
     if [[ "$current_mode" != "laptop" ]]; then
         log "Switching to laptop mode (angle=${angle}°)"
         current_mode="laptop"
+        OMARCHY_PATH=/usr/share/omarchy omarchy-shell -q hyprbend setMode laptop >/dev/null 2>&1 &
         if [[ "$ROTATE_IN_LAPTOP_MODE" != "1" ]]; then
             set_rotation 0
         fi

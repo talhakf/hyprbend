@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "id": "hyprbend.rotation",
-  "name": "Hyprbend bedding",
-  "version": "1.0.0",
-  "description": "Fullscreen black bedding overlay with colors flowing toward the new bottom edge during display rotation.",
+  "name": "Hyprbend Rotation & Virtual Keyboard",
+  "version": "1.1.0",
+  "description": "Display rotation overlay and GNOME-style bottom-edge swipe On-Screen Keyboard for 2-in-1 laptops.",
   "kinds": [
     "overlay"
   ],

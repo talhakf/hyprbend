@@ -16,6 +16,8 @@ Item {
                                            // the effect last longer, not the streaks flow faster/slower)
 
   property bool opened: false
+  property bool keyboardOpen: false
+  property bool tabletMode: false
   property string fromSide: "bottom"
   property string toSide: "right"
   property real travel: 0   // 0..1, drives only the overall fade-in/fade-out envelope
@@ -23,6 +25,18 @@ Item {
   function open(payloadJson) {
     var p = {}
     try { p = JSON.parse(payloadJson || "{}") } catch (e) {}
+    if (p.keyboard) {
+      if (p.keyboard === "open") keyboardOpen = true
+      else if (p.keyboard === "close") keyboardOpen = false
+      else if (p.keyboard === "toggle") keyboardOpen = !keyboardOpen
+      return
+    }
+    if (p.mode) {
+      var wasTab = tabletMode
+      tabletMode = (p.mode === "tablet" || p.mode === "tent")
+      if (wasTab && !tabletMode) keyboardOpen = false
+      return
+    }
     fromSide = p.from || "bottom"
     toSide = p.to || "right"
     travel = 0
@@ -222,11 +236,47 @@ Item {
     }
   }
 
+  PanelWindow {
+    id: oskPanel
+    visible: true
+    anchors { bottom: true; left: true; right: true }
+    implicitHeight: osk.panelHeight
+    color: "transparent"
+    WlrLayershell.namespace: "omarchy-hyprbend-osk"
+    WlrLayershell.layer: WlrLayer.Overlay
+    WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+    exclusionMode: ExclusionMode.Ignore
+    mask: Region {
+      item: (root.keyboardOpen || osk.slideOffset < osk.panelHeight - 2)
+        ? osk.activeSurface
+        : osk.swipeHandleItem
+    }
+
+    VirtualKeyboard {
+      id: osk
+      anchors.fill: parent
+      active: root.keyboardOpen
+      tabletMode: root.tabletMode
+      onRequestOpen: root.keyboardOpen = true
+      onRequestClose: root.keyboardOpen = false
+    }
+  }
+
   IpcHandler {
     target: "hyprbend"
     function open(payloadJson: string): string { root.open(payloadJson); return "ok" }
     function close(): string { root.close(); return "ok" }
     function state(): string { return root.opened ? "open" : "closed" }
+    function openKeyboard(): string { root.keyboardOpen = true; return "ok" }
+    function closeKeyboard(): string { root.keyboardOpen = false; return "ok" }
+    function toggleKeyboard(): string { root.keyboardOpen = !root.keyboardOpen; return root.keyboardOpen ? "open" : "closed" }
+    function keyboardState(): string { return root.keyboardOpen ? "open" : "closed" }
+    function setMode(mode: string): string {
+      var wasTablet = root.tabletMode
+      root.tabletMode = (mode === "tablet" || mode === "tent")
+      if (wasTablet && !root.tabletMode) root.keyboardOpen = false
+      return "ok"
+    }
     function ping(): string { return "ok" }
   }
 }
