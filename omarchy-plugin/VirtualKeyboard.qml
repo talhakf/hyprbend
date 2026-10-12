@@ -281,14 +281,14 @@ Item {
   property alias activeSurface: kbdSurface
   property alias swipeHandleItem: bottomSwipeBar
 
-  // 1. Bottom-edge swipe-up gesture handle (visible & interactive when keyboard is hidden)
+  // 1. Bottom-edge swipe-up gesture handle (only visible & interactive in tent/tablet mode)
   Item {
     id: bottomSwipeBar
-    width: kbdRoot.tabletMode ? Math.round(parent.width * 0.85) : Math.min(480, Math.round(parent.width * 0.45))
+    width: Math.round(parent.width * 0.85)
     height: kbdRoot.swipeZoneHeight
     anchors.horizontalCenter: parent.horizontalCenter
     anchors.bottom: parent.bottom
-    visible: !kbdRoot.active || swipeMouse.pressed
+    visible: kbdRoot.tabletMode && (!kbdRoot.active || swipeMouse.pressed)
 
     Rectangle {
       id: swipePill
@@ -298,8 +298,8 @@ Item {
       anchors.horizontalCenter: parent.horizontalCenter
       anchors.bottom: parent.bottom
       anchors.bottomMargin: 4
-      color: swipeMouse.containsMouse || swipeMouse.pressed ? Color.accent : Util.alpha(Color.foreground, kbdRoot.tabletMode ? 0.6 : 0.36)
-      visible: !kbdRoot.active && kbdRoot.slideOffset > kbdRoot.panelHeight - 20
+      color: swipeMouse.containsMouse || swipeMouse.pressed ? Color.accent : Util.alpha(Color.foreground, 0.6)
+      visible: kbdRoot.tabletMode && !kbdRoot.active && kbdRoot.slideOffset > kbdRoot.panelHeight - 20
 
       Behavior on width { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
       Behavior on color { ColorAnimation { duration: 150 } }
@@ -308,6 +308,7 @@ Item {
     MouseArea {
       id: swipeMouse
       anchors.fill: parent
+      enabled: kbdRoot.tabletMode
       hoverEnabled: true
       preventStealing: true
 

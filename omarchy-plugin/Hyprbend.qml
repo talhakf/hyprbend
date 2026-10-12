@@ -22,19 +22,43 @@ Item {
   property string toSide: "right"
   property real travel: 0   // 0..1, drives only the overall fade-in/fade-out envelope
 
+  function applyMode(mode) {
+    var isTab = (mode === "tablet" || mode === "tent")
+    tabletMode = isTab
+    if (!isTab) {
+      keyboardOpen = false
+    }
+  }
+
+  Component.onCompleted: {
+    initModeProc.running = true
+  }
+
+  Process {
+    id: initModeProc
+    command: ["sh", "-c", "cat \"${XDG_RUNTIME_DIR:-/tmp}/hyprbend-mode\" 2>/dev/null || true"]
+    stdout: SplitParser {
+      onRead: data => {
+        var m = (data || "").trim()
+        if (m.length > 0) root.applyMode(m)
+      }
+    }
+  }
+
   function open(payloadJson) {
     var p = {}
     try { p = JSON.parse(payloadJson || "{}") } catch (e) {}
     if (p.keyboard) {
-      if (p.keyboard === "open") keyboardOpen = true
-      else if (p.keyboard === "close") keyboardOpen = false
-      else if (p.keyboard === "toggle") keyboardOpen = !keyboardOpen
+      if (p.keyboard === "close") {
+        keyboardOpen = false
+      } else if (tabletMode) {
+        if (p.keyboard === "open") keyboardOpen = true
+        else if (p.keyboard === "toggle") keyboardOpen = !keyboardOpen
+      }
       return
     }
     if (p.mode) {
-      var wasTab = tabletMode
-      tabletMode = (p.mode === "tablet" || p.mode === "tent")
-      if (wasTab && !tabletMode) keyboardOpen = false
+      applyMode(p.mode)
       return
     }
     fromSide = p.from || "bottom"
@@ -238,7 +262,7 @@ Item {
 
   PanelWindow {
     id: oskPanel
-    visible: true
+    visible: root.tabletMode || root.keyboardOpen || osk.slideOffset < osk.panelHeight
     anchors { bottom: true; left: true; right: true }
     implicitHeight: osk.panelHeight
     color: "transparent"
@@ -249,7 +273,7 @@ Item {
     mask: Region {
       item: (root.keyboardOpen || osk.slideOffset < osk.panelHeight - 2)
         ? osk.activeSurface
-        : osk.swipeHandleItem
+        : (root.tabletMode ? osk.swipeHandleItem : null)
     }
 
     VirtualKeyboard {
@@ -257,7 +281,7 @@ Item {
       anchors.fill: parent
       active: root.keyboardOpen
       tabletMode: root.tabletMode
-      onRequestOpen: root.keyboardOpen = true
+      onRequestOpen: if (root.tabletMode) root.keyboardOpen = true
       onRequestClose: root.keyboardOpen = false
     }
   }
@@ -267,14 +291,20 @@ Item {
     function open(payloadJson: string): string { root.open(payloadJson); return "ok" }
     function close(): string { root.close(); return "ok" }
     function state(): string { return root.opened ? "open" : "closed" }
-    function openKeyboard(): string { root.keyboardOpen = true; return "ok" }
+    function openKeyboard(): string {
+      if (!root.tabletMode) return "disabled-in-laptop-mode"
+      root.keyboardOpen = true
+      return "ok"
+    }
     function closeKeyboard(): string { root.keyboardOpen = false; return "ok" }
-    function toggleKeyboard(): string { root.keyboardOpen = !root.keyboardOpen; return root.keyboardOpen ? "open" : "closed" }
-    function keyboardState(): string { return root.keyboardOpen ? "open" : "closed" }
+    function toggleKeyboard(): string {
+      if (!root.tabletMode) return "disabled-in-laptop-mode"
+      root.keyboardOpen = !root.keyboardOpen
+      return root.keyboardOpen ? "open" : "closed"
+    }
+    function keyboardState(): string { return root.keyboardOpen ? "open" : (root.tabletMode ? "closed" : "disabled-in-laptop-mode") }
     function setMode(mode: string): string {
-      var wasTablet = root.tabletMode
-      root.tabletMode = (mode === "tablet" || mode === "tent")
-      if (wasTablet && !root.tabletMode) root.keyboardOpen = false
+      root.applyMode(mode)
       return "ok"
     }
     function ping(): string { return "ok" }

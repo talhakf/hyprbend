@@ -393,11 +393,17 @@ stop_orientation_monitor() {
     fi
 }
 
+sync_mode_state() {
+    local mode=$1
+    printf '%s\n' "$mode" > "${XDG_RUNTIME_DIR:-/tmp}/hyprbend-mode" 2>/dev/null || true
+    OMARCHY_PATH=/usr/share/omarchy omarchy-shell -q hyprbend setMode "$mode" >/dev/null 2>&1 &
+}
+
 switch_to_tablet() {
     if [[ "$current_mode" != "tablet" ]]; then
         log "Switching to tablet mode (angle=${angle}°)"
         current_mode="tablet"
-        OMARCHY_PATH=/usr/share/omarchy omarchy-shell -q hyprbend setMode tablet >/dev/null 2>&1 &
+        sync_mode_state tablet
         set_rotation "$last_sensor_transform"
     fi
 }
@@ -406,7 +412,7 @@ switch_to_tent() {
     if [[ "$current_mode" != "tent" ]]; then
         log "Switching to tent mode (angle=${angle}°)"
         current_mode="tent"
-        OMARCHY_PATH=/usr/share/omarchy omarchy-shell -q hyprbend setMode tent >/dev/null 2>&1 &
+        sync_mode_state tent
         set_rotation "$last_sensor_transform"
     fi
 }
@@ -415,7 +421,7 @@ switch_to_laptop() {
     if [[ "$current_mode" != "laptop" ]]; then
         log "Switching to laptop mode (angle=${angle}°)"
         current_mode="laptop"
-        OMARCHY_PATH=/usr/share/omarchy omarchy-shell -q hyprbend setMode laptop >/dev/null 2>&1 &
+        sync_mode_state laptop
         if [[ "$ROTATE_IN_LAPTOP_MODE" != "1" ]]; then
             set_rotation 0
         fi
