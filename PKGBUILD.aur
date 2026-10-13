@@ -1,37 +1,43 @@
-# Maintainer: kosmosys
-pkgname=hyprbend
-pkgver=0.1.0.r3.g5c72299
+# Maintainer: Talha Karanfil <karanfiltalha@hotmail.com>
+# Contributor: kosmosys <kosmosys.work@gmail.com>
+pkgname=hyprbend-git
+pkgver=0.2.0.r33.g0000000
 pkgrel=1
-pkgdesc="Automatic screen rotation and virtual keyboard for 2-in-1 laptops on Hyprland"
+pkgdesc="Automatic screen/stylus rotation and touch virtual keyboard for 2-in-1 laptops on Hyprland"
 arch=('any')
-url="https://github.com/kosmo-sys/hyprbend"
+url="https://github.com/talhakf/hyprbend"
 license=('MIT')
-depends=('hyprland' 'iio-sensor-proxy' 'bash' '7zip' 'curl' 'jq')
-optdepends=('omarchy: enables the Hyprbend rotation overlay via omarchy plugin add')
+depends=('hyprland' 'bash' '7zip' 'curl' 'jq' 'gawk' 'wtype' 'python')
+optdepends=(
+    'iio-sensor-proxy: D-Bus accelerometer proxy (direct IIO fallback built-in)'
+    'omarchy: enables the Hyprbend rotation overlay and touch virtual keyboard'
+)
 makedepends=('git')
 provides=('hyprbend')
 conflicts=('hyprbend')
-source=("hyprbend::git+https://github.com/kosmo-sys/hyprbend.git#tag=v0.1.0")
+source=("hyprbend::git+https://github.com/talhakf/hyprbend.git")
 sha256sums=('SKIP')
 install=hyprbend.install
 
 pkgver() {
     cd "$srcdir/hyprbend"
-    git describe --tags --long | sed 's/^v//;s/-/./g'
+    printf "0.2.0.r%s.g%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
 }
-
 
 package() {
     cd "$srcdir/hyprbend"
 
-    install -Dm755 hyprbend          "$pkgdir/usr/bin/hyprbend"
-    install -Dm755 hyprbend-check    "$pkgdir/usr/bin/hyprbend-check"
-    install -Dm755 hyprbend-fix      "$pkgdir/usr/bin/hyprbend-fix"
-    install -Dm755 hyprbend-report   "$pkgdir/usr/bin/hyprbend-report"
-    install -Dm644 hyprbend-detect.sh "$pkgdir/usr/lib/hyprbend/detect.sh"
-    install -Dm644 hyprbend.service  "$pkgdir/usr/lib/systemd/user/hyprbend.service"
-    install -Dm644 KNOWN_ISSUES.md   "$pkgdir/usr/share/doc/hyprbend/KNOWN_ISSUES.md"
+    install -Dm755 hyprbend                     "$pkgdir/usr/bin/hyprbend"
+    install -Dm755 hyprbend-check               "$pkgdir/usr/bin/hyprbend-check"
+    install -Dm755 hyprbend-fix                 "$pkgdir/usr/bin/hyprbend-fix"
+    install -Dm755 hyprbend-report              "$pkgdir/usr/bin/hyprbend-report"
+    install -Dm644 hyprbend-detect.sh           "$pkgdir/usr/lib/hyprbend/detect.sh"
+    install -Dm644 hyprbend.service             "$pkgdir/usr/lib/systemd/user/hyprbend.service"
+    install -Dm644 KNOWN_ISSUES.md              "$pkgdir/usr/share/doc/hyprbend/KNOWN_ISSUES.md"
+    install -Dm644 config.conf.example          "$pkgdir/usr/share/doc/hyprbend/config.conf.example"
+    install -Dm644 LICENSE                      "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 
-    install -Dm644 omarchy-plugin/Hyprbend.qml  "$pkgdir/usr/share/hyprbend/omarchy-plugin/Hyprbend.qml"
-    install -Dm644 omarchy-plugin/manifest.json "$pkgdir/usr/share/hyprbend/omarchy-plugin/manifest.json"
+    install -Dm644 omarchy-plugin/Hyprbend.qml        "$pkgdir/usr/share/hyprbend/omarchy-plugin/Hyprbend.qml"
+    install -Dm644 omarchy-plugin/VirtualKeyboard.qml "$pkgdir/usr/share/hyprbend/omarchy-plugin/VirtualKeyboard.qml"
+    install -Dm644 omarchy-plugin/manifest.json       "$pkgdir/usr/share/hyprbend/omarchy-plugin/manifest.json"
 }
