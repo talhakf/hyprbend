@@ -222,6 +222,13 @@ report_iio() {
         pass "Tablet mode switch: ${sw_name}"
     fi
 
+    if command -v detect_stylus_devices &>/dev/null; then
+        local sdev
+        while IFS= read -r sdev; do
+            [[ -n "$sdev" ]] && pass "Stylus/pen input device: ${sdev}"
+        done < <(detect_stylus_devices 2>/dev/null || true)
+    fi
+
     if $has_hinge; then
         local raw_hinge="0"
         [[ -f "${hinge_path}/in_angl0_raw" ]] && raw_hinge=$(cat "${hinge_path}/in_angl0_raw" 2>/dev/null || echo "0")

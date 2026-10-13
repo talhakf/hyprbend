@@ -337,6 +337,20 @@ detect_tablet_mode_switch() {
     return 1
 }
 
+# Detects stylus / pen tablet input devices from hyprctl devices (one per line)
+detect_stylus_devices() {
+    local out
+    out=$(hyprctl -j devices 2>/dev/null | jq -r '
+        ((.tablets // [])[] | .name // empty),
+        ((.touch // [])[] | .name // empty | select(test("(-stylus|-pen)$")))
+    ' 2>/dev/null | awk 'NF && !seen[$0]++' || echo "")
+    if [[ -n "$out" ]]; then
+        echo "$out"
+        return 0
+    fi
+    return 1
+}
+
 # Returns 0 if hinge or accelerometer IIO device is present
 check_sensors_present() {
     for dev in /sys/bus/iio/devices/iio:device*; do
