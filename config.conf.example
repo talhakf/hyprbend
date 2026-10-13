@@ -1,0 +1,26 @@
+# hyprbend configuration file
+# Copy to ~/.config/hyprbend/config.conf to customize behavior.
+
+# Hinge angle boundary (deg) between laptop (<180) and tent/stand (>=180) modes
+LAPTOP_TENT_BOUNDARY=180
+
+# Hinge angle boundary (deg) for full tablet mode (>=310)
+TABLET_ANGLE=310
+
+# Hysteresis margin (deg) around mode boundaries to prevent mode flicker
+ANGLE_HYSTERESIS=8
+
+# Milliseconds to wait before committing a mode transition
+DEBOUNCE_DELAY=250
+
+# Set to 1 to allow screen rotation even in laptop mode (default: 0)
+ROTATE_IN_LAPTOP_MODE=0
+
+# On-Screen Keyboard default layout: "de" (QWERTZ) or "en" (QWERTY)
+OSK_DEFAULT_LANG="de"
+
+# On-Screen Keyboard dock mode: 1 = push windows up (exclusive zone), 0 = float overlay
+OSK_DOCK_MODE=1
+
+# On-Screen Keyboard height in pixels
+OSK_HEIGHT=310

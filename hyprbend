@@ -27,21 +27,107 @@ for _detect_candidate in \
     fi
 done
 
-# Subcommand dispatch: hyprbend check|fix|report|keyboard
-if [[ "${1:-}" == "keyboard" ]]; then
-    shift
-    _kact="${1:-toggle}"
-    case "$_kact" in
-        open)   exec omarchy-shell hyprbend openKeyboard ;;
-        close)  exec omarchy-shell hyprbend closeKeyboard ;;
-        toggle) exec omarchy-shell hyprbend toggleKeyboard ;;
-        state)  exec omarchy-shell hyprbend keyboardState ;;
-        *)
-            echo "Usage: hyprbend keyboard [open|close|toggle|state]" >&2
-            exit 1
-            ;;
-    esac
-fi
+# Load optional configuration files
+for _cfg in "/etc/hyprbend/config.conf" "${XDG_CONFIG_HOME:-$HOME/.config}/hyprbend/config.conf"; do
+    if [[ -f "$_cfg" ]]; then
+        # shellcheck disable=SC1090
+        source "$_cfg"
+    fi
+done
+
+_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp}"
+_MODE_FILE="${_RUNTIME_DIR}/hyprbend-mode"
+_LOCK_FILE="${_RUNTIME_DIR}/hyprbend-lock"
+
+# Subcommand dispatch: hyprbend check|fix|report|keyboard|lock|unlock|toggle-lock|status
+case "${1:-}" in
+    keyboard)
+        shift
+        _kact="${1:-toggle}"
+        case "$_kact" in
+            open)   exec omarchy-shell hyprbend openKeyboard ;;
+            close)  exec omarchy-shell hyprbend closeKeyboard ;;
+            toggle) exec omarchy-shell hyprbend toggleKeyboard ;;
+            state)  exec omarchy-shell hyprbend keyboardState ;;
+            *)
+                echo "Usage: hyprbend keyboard [open|close|toggle|state]" >&2
+                exit 1
+                ;;
+        esac
+        ;;
+    lock)
+        shift
+        _lact="${1:-on}"
+        case "$_lact" in
+            on|1|true|locked)
+                printf '1\n' > "$_LOCK_FILE"
+                omarchy-shell -q hyprbend setRotationLock 1 >/dev/null 2>&1 || true
+                echo "locked"
+                ;;
+            off|0|false|unlocked)
+                printf '0\n' > "$_LOCK_FILE"
+                omarchy-shell -q hyprbend setRotationLock 0 >/dev/null 2>&1 || true
+                echo "unlocked"
+                ;;
+            toggle)
+                _cur=$(cat "$_LOCK_FILE" 2>/dev/null || echo "0")
+                if [[ "$_cur" == "1" ]]; then
+                    printf '0\n' > "$_LOCK_FILE"
+                    omarchy-shell -q hyprbend setRotationLock 0 >/dev/null 2>&1 || true
+                    echo "unlocked"
+                else
+                    printf '1\n' > "$_LOCK_FILE"
+                    omarchy-shell -q hyprbend setRotationLock 1 >/dev/null 2>&1 || true
+                    echo "locked"
+                fi
+                ;;
+            state)
+                _cur=$(cat "$_LOCK_FILE" 2>/dev/null || echo "0")
+                [[ "$_cur" == "1" ]] && echo "locked" || echo "unlocked"
+                ;;
+            *)
+                echo "Usage: hyprbend lock [on|off|toggle|state]" >&2
+                exit 1
+                ;;
+        esac
+        exit 0
+        ;;
+    unlock)
+        printf '0\n' > "$_LOCK_FILE"
+        omarchy-shell -q hyprbend setRotationLock 0 >/dev/null 2>&1 || true
+        echo "unlocked"
+        exit 0
+        ;;
+    toggle-lock)
+        exec "$0" lock toggle
+        ;;
+    status)
+        _mode=$(cat "$_MODE_FILE" 2>/dev/null || echo "unknown")
+        _lock=$(cat "$_LOCK_FILE" 2>/dev/null || echo "0")
+        _lock_str=$([[ "$_lock" == "1" ]] && echo "locked" || echo "unlocked")
+        _kbd=$(omarchy-shell hyprbend keyboardState 2>/dev/null || echo "unknown")
+        _svc=$(systemctl --user is-active hyprbend.service 2>/dev/null || echo "inactive")
+        _mon=$(hyprctl -j monitors 2>/dev/null | jq -r '.[0].name // "none"' 2>/dev/null || echo "none")
+        _tf=$(hyprctl -j monitors 2>/dev/null | jq -r '.[0].transform // 0' 2>/dev/null || echo "0")
+        _touch=$(hyprctl -j devices 2>/dev/null | jq -r '.touch[]?.name // empty' 2>/dev/null | grep -v -- '-stylus$' | head -1 || echo "none")
+        _stylus=$(detect_stylus_devices 2>/dev/null | paste -sd ', ' - || echo "none")
+        _ang="unknown"
+        if _dual=$(detect_dual_accel_devices 2>/dev/null); then
+            read -r _s _b <<< "$_dual"
+            _ang=$(compute_dual_accel_hinge_angle "$_s" "$_b" 2>/dev/null || echo "portrait")
+        fi
+        echo "hyprbend status:"
+        echo "  Service:        ${_svc}"
+        echo "  Mode:           ${_mode}"
+        echo "  Hinge angle:    ${_ang}°"
+        echo "  Monitor:        ${_mon} (transform=${_tf})"
+        echo "  Rotation lock:  ${_lock_str}"
+        echo "  OSK keyboard:   ${_kbd}"
+        echo "  Touch device:   ${_touch:-none}"
+        echo "  Stylus device:  ${_stylus:-none}"
+        exit 0
+        ;;
+esac
 
 if [[ "${1:-}" =~ ^(check|fix|report)$ ]]; then
     _subcmd="${BASH_REMATCH[1]}"
@@ -67,6 +153,7 @@ fi
 CLOSED_ANGLE=0                            # lid fully closed
 LAPTOP_TENT_BOUNDARY="${LAPTOP_TENT_BOUNDARY:-180}" # < 180 = laptop, >= 180 = tent/tablet
 TABLET_ANGLE="${TABLET_ANGLE:-310}"       # >= 310 = tablet (lid folded fully back)
+ANGLE_HYSTERESIS="${ANGLE_HYSTERESIS:-8}" # deg hysteresis margin around mode boundaries
 DEBOUNCE_DELAY="${DEBOUNCE_DELAY:-250}"   # milliseconds to wait before mode switch
 ROTATE_IN_LAPTOP_MODE="${ROTATE_IN_LAPTOP_MODE:-0}" # 0 = only auto-rotate in tent/tablet mode; 1 = always
 
@@ -75,8 +162,10 @@ current_mode="unknown"
 current_transform=""
 last_sensor_transform=0
 last_valid_angle=90
+last_lock_state="0"
 monitor_sensor_pid=""
 MONITOR_FD=""
+declare -a STYLUS_DEVICES=()
 
 log() {
     echo "[hyprbend] $*" >&2
@@ -99,6 +188,9 @@ cleanup() {
     if [[ -n "${TOUCH_DEVICE_NAME:-}" ]]; then
         run_hyprctl hyprctl eval "hl.device({ name = \"$TOUCH_DEVICE_NAME\", transform = 0 })"
     fi
+    for _sdev in "${STYLUS_DEVICES[@]:-}"; do
+        [[ -n "$_sdev" ]] && run_hyprctl hyprctl eval "hl.device({ name = \"$_sdev\", transform = 0 })"
+    done
     exit 0
 }
 
@@ -229,6 +321,11 @@ TABLET_SWITCH_NAME=""
 if command -v detect_tablet_mode_switch &>/dev/null; then
     TABLET_SWITCH_NAME=$(detect_tablet_mode_switch || echo "")
 fi
+if command -v detect_stylus_devices &>/dev/null; then
+    while IFS= read -r _sdev; do
+        [[ -n "$_sdev" ]] && STYLUS_DEVICES+=("$_sdev")
+    done < <(detect_stylus_devices || true)
+fi
 
 # Query current monitor transform so we don't force an unnecessary reconfiguration on startup.
 current_transform=$(hyprctl -j monitors 2>/dev/null | jq -r ".[] | select(.name == \"$MONITOR_OUTPUT\") | .transform" 2>/dev/null || echo "")
@@ -241,6 +338,7 @@ log "  Base accelerometer: ${ACCEL_BASE_DEV:-none}"
 log "  Tablet mode switch: ${TABLET_SWITCH_NAME:-none}"
 log "  Monitor: $MONITOR_OUTPUT"
 log "  Touch device: ${TOUCH_DEVICE_NAME:-none}"
+log "  Stylus devices: ${STYLUS_DEVICES[*]:-none}"
 
 get_hinge_angle() {
     local prev_angle="${1:-$last_valid_angle}"
@@ -323,6 +421,10 @@ transform_desc() {
     esac
 }
 
+is_rotation_locked() {
+    [[ -f "$_LOCK_FILE" ]] && [[ "$(cat "$_LOCK_FILE" 2>/dev/null || echo "0")" == "1" ]]
+}
+
 set_rotation() {
     local transform=$1
     # If current_transform is unknown (empty), force the rotation through once.
@@ -352,6 +454,11 @@ set_rotation() {
         if [[ -n "$TOUCH_DEVICE_NAME" ]]; then
             batch+=" ; eval hl.device({ name = \"${TOUCH_DEVICE_NAME}\", transform = ${transform} })"
         fi
+        for _sdev in "${STYLUS_DEVICES[@]:-}"; do
+            if [[ -n "$_sdev" ]]; then
+                batch+=" ; eval hl.device({ name = \"${_sdev}\", transform = ${transform} })"
+            fi
+        done
         run_hyprctl hyprctl --batch "$batch"
         current_transform=$transform
     fi
@@ -360,6 +467,9 @@ set_rotation() {
 apply_orientation_if_allowed() {
     local target_transform=$1
     last_sensor_transform=$target_transform
+    if is_rotation_locked; then
+        return 0
+    fi
     if [[ "$current_mode" == "tablet" || "$current_mode" == "tent" || "$ROTATE_IN_LAPTOP_MODE" == "1" ]]; then
         set_rotation "$target_transform"
     fi
@@ -395,7 +505,7 @@ stop_orientation_monitor() {
 
 sync_mode_state() {
     local mode=$1
-    printf '%s\n' "$mode" > "${XDG_RUNTIME_DIR:-/tmp}/hyprbend-mode" 2>/dev/null || true
+    printf '%s\n' "$mode" > "$_MODE_FILE" 2>/dev/null || true
     OMARCHY_PATH=/usr/share/omarchy omarchy-shell -q hyprbend setMode "$mode" >/dev/null 2>&1 &
 }
 
@@ -404,7 +514,9 @@ switch_to_tablet() {
         log "Switching to tablet mode (angle=${angle}°)"
         current_mode="tablet"
         sync_mode_state tablet
-        set_rotation "$last_sensor_transform"
+        if ! is_rotation_locked; then
+            set_rotation "$last_sensor_transform"
+        fi
     fi
 }
 
@@ -413,7 +525,9 @@ switch_to_tent() {
         log "Switching to tent mode (angle=${angle}°)"
         current_mode="tent"
         sync_mode_state tent
-        set_rotation "$last_sensor_transform"
+        if ! is_rotation_locked; then
+            set_rotation "$last_sensor_transform"
+        fi
     fi
 }
 
@@ -454,7 +568,6 @@ import math, sys, time, glob
 hinge_path, screen_dev, base_dev = sys.argv[1], sys.argv[2], sys.argv[3]
 last_angle = 90
 last_orient = 0
-prev_emitted = None
 
 def read_int(path):
     try:
@@ -553,19 +666,55 @@ while true; do
         last_valid_angle="$angle"
     fi
 
+    # Apply queued orientation immediately when rotation lock is released
+    _cur_lock="0"
+    is_rotation_locked && _cur_lock="1"
+    if [[ "$last_lock_state" == "1" && "$_cur_lock" == "0" ]]; then
+        log "Rotation lock released"
+        apply_orientation_if_allowed "$last_sensor_transform"
+    elif [[ "$last_lock_state" == "0" && "$_cur_lock" == "1" ]]; then
+        log "Rotation lock engaged"
+    fi
+    last_lock_state="$_cur_lock"
+
     current_time=${EPOCHREALTIME/./}
     current_time=${current_time:0:13}
     time_diff=$((current_time - last_switch_time))
 
-    # Determine mode from angle: laptop < 180, tent < TABLET_ANGLE, else tablet.
-    new_mode=""
-    if [[ "$angle" -ge "$TABLET_ANGLE" ]]; then
-        new_mode="tablet"
-    elif [[ "$angle" -ge "$LAPTOP_TENT_BOUNDARY" ]]; then
-        new_mode="tent"
-    else
-        new_mode="laptop"
-    fi
+    # Determine mode from angle with hysteresis around LAPTOP_TENT_BOUNDARY and TABLET_ANGLE
+    new_mode="$current_mode"
+    case "$current_mode" in
+        laptop)
+            if (( angle >= TABLET_ANGLE )); then
+                new_mode="tablet"
+            elif (( angle >= LAPTOP_TENT_BOUNDARY + ANGLE_HYSTERESIS )); then
+                new_mode="tent"
+            fi
+            ;;
+        tent)
+            if (( angle >= TABLET_ANGLE + ANGLE_HYSTERESIS )); then
+                new_mode="tablet"
+            elif (( angle < LAPTOP_TENT_BOUNDARY - ANGLE_HYSTERESIS )); then
+                new_mode="laptop"
+            fi
+            ;;
+        tablet)
+            if (( angle < LAPTOP_TENT_BOUNDARY - ANGLE_HYSTERESIS )); then
+                new_mode="laptop"
+            elif (( angle < TABLET_ANGLE - ANGLE_HYSTERESIS )); then
+                new_mode="tent"
+            fi
+            ;;
+        *)
+            if (( angle >= TABLET_ANGLE )); then
+                new_mode="tablet"
+            elif (( angle >= LAPTOP_TENT_BOUNDARY )); then
+                new_mode="tent"
+            else
+                new_mode="laptop"
+            fi
+            ;;
+    esac
 
     if [[ "$new_mode" != "$current_mode" ]] && [[ "$time_diff" -ge "$DEBOUNCE_DELAY" ]]; then
         case "$new_mode" in
