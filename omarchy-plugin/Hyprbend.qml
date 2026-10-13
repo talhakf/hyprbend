@@ -18,6 +18,9 @@ Item {
   property bool opened: false
   property bool keyboardOpen: false
   property bool tabletMode: false
+  property bool rotationLocked: false
+  property bool dockKeyboard: true
+  property int oskCustomHeight: 310
   property string fromSide: "bottom"
   property string toSide: "right"
   property real travel: 0   // 0..1, drives only the overall fade-in/fade-out envelope
@@ -30,17 +33,37 @@ Item {
     }
   }
 
+  function setLockState(locked) {
+    rotationLocked = locked
+    var val = locked ? "1" : "0"
+    Quickshell.execDetached(["sh", "-c", "printf '%s\\n' \"" + val + "\" > \"${XDG_RUNTIME_DIR:-/tmp}/hyprbend-lock\""])
+  }
+
   Component.onCompleted: {
     initModeProc.running = true
   }
 
   Process {
     id: initModeProc
-    command: ["sh", "-c", "cat \"${XDG_RUNTIME_DIR:-/tmp}/hyprbend-mode\" 2>/dev/null || true"]
+    command: [
+      "sh", "-c",
+      "m=$(cat \"${XDG_RUNTIME_DIR:-/tmp}/hyprbend-mode\" 2>/dev/null || echo ''); " +
+      "l=$(cat \"${XDG_RUNTIME_DIR:-/tmp}/hyprbend-lock\" 2>/dev/null || echo '0'); " +
+      "OSK_DEFAULT_LANG=de; OSK_DOCK_MODE=1; OSK_HEIGHT=310; " +
+      "[ -f \"$HOME/.config/hyprbend/config.conf\" ] && . \"$HOME/.config/hyprbend/config.conf\" 2>/dev/null || true; " +
+      "printf '%s|%s|%s|%s|%s\\n' \"$m\" \"$l\" \"$OSK_DEFAULT_LANG\" \"$OSK_DOCK_MODE\" \"$OSK_HEIGHT\""
+    ]
     stdout: SplitParser {
       onRead: data => {
-        var m = (data || "").trim()
-        if (m.length > 0) root.applyMode(m)
+        var parts = (data || "").trim().split("|")
+        if (parts.length >= 1 && parts[0].length > 0) root.applyMode(parts[0])
+        if (parts.length >= 2) root.rotationLocked = (parts[1] === "1" || parts[1] === "true")
+        if (parts.length >= 3 && (parts[2] === "de" || parts[2] === "en")) osk.layoutLang = parts[2]
+        if (parts.length >= 4) root.dockKeyboard = (parts[3] !== "0" && parts[3] !== "false")
+        if (parts.length >= 5) {
+          var h = parseInt(parts[4], 10)
+          if (!isNaN(h) && h >= 220 && h <= 520) root.oskCustomHeight = h
+        }
       }
     }
   }
@@ -59,6 +82,10 @@ Item {
     }
     if (p.mode) {
       applyMode(p.mode)
+      return
+    }
+    if (p.rotationLock !== undefined) {
+      rotationLocked = Boolean(p.rotationLock)
       return
     }
     fromSide = p.from || "bottom"
@@ -269,7 +296,9 @@ Item {
     WlrLayershell.namespace: "omarchy-hyprbend-osk"
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
-    exclusionMode: ExclusionMode.Ignore
+    exclusionMode: (root.keyboardOpen && root.dockKeyboard)
+      ? ExclusionMode.Normal
+      : ExclusionMode.Ignore
     mask: Region {
       item: (root.keyboardOpen || osk.slideOffset < osk.panelHeight - 2)
         ? osk.activeSurface
@@ -281,8 +310,13 @@ Item {
       anchors.fill: parent
       active: root.keyboardOpen
       tabletMode: root.tabletMode
+      rotationLocked: root.rotationLocked
+      dockMode: root.dockKeyboard
+      panelHeight: root.oskCustomHeight
       onRequestOpen: if (root.tabletMode) root.keyboardOpen = true
       onRequestClose: root.keyboardOpen = false
+      onRequestToggleLock: root.setLockState(!root.rotationLocked)
+      onRequestToggleDock: root.dockKeyboard = !root.dockKeyboard
     }
   }
 
@@ -306,6 +340,18 @@ Item {
     function setMode(mode: string): string {
       root.applyMode(mode)
       return "ok"
+    }
+    function setRotationLock(locked: string): string {
+      var isLocked = (locked === "1" || locked === "true" || locked === "locked" || locked === "on")
+      root.setLockState(isLocked)
+      return root.rotationLocked ? "locked" : "unlocked"
+    }
+    function toggleRotationLock(): string {
+      root.setLockState(!root.rotationLocked)
+      return root.rotationLocked ? "locked" : "unlocked"
+    }
+    function rotationLockState(): string {
+      return root.rotationLocked ? "locked" : "unlocked"
     }
     function ping(): string { return "ok" }
   }

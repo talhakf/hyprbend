@@ -2,13 +2,17 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import qs.Commons
+import qs.Ui
 
 Item {
   id: kbdRoot
 
   property bool active: false
   property bool tabletMode: false
+  property bool rotationLocked: false
+  property bool dockMode: true
   property bool splitMode: false
+  property bool spaceTrackpadActive: false
   property string layoutLang: "de"     // "de" (QWERTZ) or "en" (QWERTY)
   property string layerMode: "alpha"   // "alpha", "num", "sym"
   property bool shiftActive: false
@@ -18,20 +22,34 @@ Item {
   property bool superLatched: false
 
   // Slide offset: 0 = fully open, panelHeight = fully hidden below bottom edge
+  property int panelHeight: Style.space(310)
   property real slideOffset: panelHeight
   property real dragStartY: 0
   property real dragStartOffset: 0
   property bool dragging: false
 
-  readonly property int panelHeight: 310
-  readonly property int swipeZoneHeight: tabletMode ? 24 : 14
-  readonly property int keySpacing: 6
-  readonly property int rowSpacing: 6
-  readonly property int outerPad: 10
-  readonly property int splitGap: splitMode ? Math.min(260, Math.round(width * 0.22)) : 0
+  readonly property int swipeZoneHeight: tabletMode ? Style.space(22) : Style.space(14)
+  readonly property int keySpacing: Style.spacing.sm
+  readonly property int rowSpacing: Style.spacing.sm
+  readonly property int outerPad: Style.spacing.lg
+  readonly property int edgeMargin: dockMode ? 0 : Style.gapsOut
+  readonly property int splitGap: splitMode ? Math.min(Style.space(260), Math.round(width * 0.22)) : 0
+
+  readonly property color surfaceFg: Color.popups.text
+  readonly property color surfaceBg: Color.popups.background
+  readonly property color surfaceAccent: Color.accent
+  readonly property var panelBorderSpec: Border.localOrSurfaceSpec(
+    "popups",
+    "border",
+    Color.popups.border,
+    Color.popups.border,
+    Math.max(1, Style.space(2))
+  )
 
   signal requestClose()
   signal requestOpen()
+  signal requestToggleLock()
+  signal requestToggleDock()
 
   onActiveChanged: {
     slideAnim.stop()
@@ -39,6 +57,7 @@ Item {
     slideAnim.start()
     if (!active) {
       repeatTimer.stop()
+      spaceTrackpadActive = false
       ctrlLatched = false
       altLatched = false
       superLatched = false
@@ -50,7 +69,7 @@ Item {
     id: slideAnim
     target: kbdRoot
     property: "slideOffset"
-    duration: 240
+    duration: 200
     easing.type: Easing.OutCubic
   }
 
@@ -143,6 +162,14 @@ Item {
       splitMode = !splitMode
       return
     }
+    if (action === "rotlock") {
+      requestToggleLock()
+      return
+    }
+    if (action === "dock") {
+      requestToggleDock()
+      return
+    }
     if (action === "mod") {
       if (spec.mod === "ctrl")  ctrlLatched = !ctrlLatched
       if (spec.mod === "alt")   altLatched = !altLatched
@@ -186,7 +213,7 @@ Item {
           { label: "#+=", action: "layer", target: "sym", weight: 1.4, special: true },
           { label: "*" }, { label: "\"" }, { label: "'" }, { label: ":" },
           { label: ";" }, { label: "!" }, { label: "?" },
-          { label: "⌫", action: "key", key: "BackSpace", weight: 1.5, special: true, repeatable: true }
+          { label: "󰁮", action: "key", key: "BackSpace", weight: 1.5, special: true, repeatable: true }
         ]
       ]
     }
@@ -204,7 +231,7 @@ Item {
           { label: "123", action: "layer", target: "num", weight: 1.4, special: true },
           { label: "<" }, { label: ">" }, { label: "_" }, { label: "«" },
           { label: "»" }, { label: "¦" }, { label: "¬" },
-          { label: "⌫", action: "key", key: "BackSpace", weight: 1.5, special: true, repeatable: true }
+          { label: "󰁮", action: "key", key: "BackSpace", weight: 1.5, special: true, repeatable: true }
         ]
       ]
     }
@@ -220,10 +247,10 @@ Item {
           { label: "h" }, { label: "j" }, { label: "k" }, { label: "l" }
         ],
         [
-          { label: capsLocked ? "CAPS" : "⇧", action: "shift", weight: 1.4, special: true, highlighted: shiftActive || capsLocked },
+          { label: capsLocked ? "󰘲 CAPS" : "󰘶", action: "shift", weight: 1.4, special: true, highlighted: shiftActive || capsLocked },
           { label: "z" }, { label: "x" }, { label: "c" }, { label: "v" },
           { label: "b" }, { label: "n" }, { label: "m" },
-          { label: "⌫", action: "key", key: "BackSpace", weight: 1.5, special: true, repeatable: true }
+          { label: "󰁮", action: "key", key: "BackSpace", weight: 1.5, special: true, repeatable: true }
         ]
       ]
     }
@@ -239,10 +266,10 @@ Item {
         { label: "h" }, { label: "j" }, { label: "k" }, { label: "l" }, { label: "ö" }, { label: "ä" }
       ],
       [
-        { label: capsLocked ? "CAPS" : "⇧", action: "shift", weight: 1.35, special: true, highlighted: shiftActive || capsLocked },
+        { label: capsLocked ? "󰘲 CAPS" : "󰘶", action: "shift", weight: 1.35, special: true, highlighted: shiftActive || capsLocked },
         { label: "y" }, { label: "x" }, { label: "c" }, { label: "v" },
         { label: "b" }, { label: "n" }, { label: "m" }, { label: "ß", shiftLabel: "?" },
-        { label: "⌫", action: "key", key: "BackSpace", weight: 1.45, special: true, repeatable: true }
+        { label: "󰁮", action: "key", key: "BackSpace", weight: 1.45, special: true, repeatable: true }
       ]
     ]
   }
@@ -253,27 +280,37 @@ Item {
       { label: isAlpha ? "?123" : "ABC", action: "layer", target: isAlpha ? "num" : "alpha", weight: 1.3, special: true },
       { label: layoutLang.toUpperCase(), action: "lang", weight: 0.9, special: true },
       { label: ",", shiftLabel: ";" },
-      { label: layoutLang === "de" ? "Leertaste" : "Space", action: "key", key: "space", weight: 4.2, isSpace: true, repeatable: true },
+      {
+        label: spaceTrackpadActive ? "󰅁  CURSOR  󰅂" : (layoutLang === "de" ? "LEERTASTE" : "SPACE"),
+        action: "key",
+        key: "space",
+        weight: 4.2,
+        isSpace: true,
+        repeatable: true,
+        highlighted: spaceTrackpadActive
+      },
       { label: ".", shiftLabel: ":" },
       { label: "-", shiftLabel: "_" },
-      { label: "↵", action: "key", key: "Return", weight: 1.45, accent: true },
-      { label: "⌨ ↓", action: "hide", weight: 1.1, special: true }
+      { label: "󰌑", action: "key", key: "Return", weight: 1.45, accent: true },
+      { label: "󰌌 󰅀", action: "hide", weight: 1.1, special: true }
     ]
   }
 
   function getUtilityRow() {
     return [
-      { label: "Esc", action: "key", key: "Escape", weight: 1.0, special: true },
-      { label: "Tab", action: "key", key: "Tab", weight: 1.0, special: true },
-      { label: "Ctrl", action: "mod", mod: "ctrl", weight: 1.0, special: true, highlighted: ctrlLatched },
-      { label: "Alt", action: "mod", mod: "alt", weight: 1.0, special: true, highlighted: altLatched },
-      { label: "Super", action: "mod", mod: "super", weight: 1.1, special: true, highlighted: superLatched },
-      { label: "←", action: "key", key: "Left", weight: 0.9, special: true, repeatable: true },
-      { label: "↓", action: "key", key: "Down", weight: 0.9, special: true, repeatable: true },
-      { label: "↑", action: "key", key: "Up", weight: 0.9, special: true, repeatable: true },
-      { label: "→", action: "key", key: "Right", weight: 0.9, special: true, repeatable: true },
-      { label: splitMode ? "Full" : "Split", action: "split", weight: 1.1, special: true, highlighted: splitMode },
-      { label: "▼ Ausblenden", action: "hide", weight: 1.5, special: true }
+      { label: "ESC", action: "key", key: "Escape", weight: 0.95, special: true },
+      { label: "TAB", action: "key", key: "Tab", weight: 0.95, special: true },
+      { label: "CTRL", action: "mod", mod: "ctrl", weight: 0.95, special: true, highlighted: ctrlLatched },
+      { label: "ALT", action: "mod", mod: "alt", weight: 0.95, special: true, highlighted: altLatched },
+      { label: "SUPER", action: "mod", mod: "super", weight: 1.05, special: true, highlighted: superLatched },
+      { label: "󰅁", action: "key", key: "Left", weight: 0.85, special: true, repeatable: true },
+      { label: "󰅀", action: "key", key: "Down", weight: 0.85, special: true, repeatable: true },
+      { label: "󰅃", action: "key", key: "Up", weight: 0.85, special: true, repeatable: true },
+      { label: "󰅂", action: "key", key: "Right", weight: 0.85, special: true, repeatable: true },
+      { label: rotationLocked ? "󰌾 LOCK" : "󰌿 ROT", action: "rotlock", weight: 1.15, special: true, highlighted: rotationLocked },
+      { label: dockMode ? "󰘔 DOCK" : "󰖲 FLOAT", action: "dock", weight: 1.1, special: true, highlighted: dockMode },
+      { label: splitMode ? "󰯍 FULL" : "󰯌 SPLIT", action: "split", weight: 1.1, special: true, highlighted: splitMode },
+      { label: "󰅀 HIDE", action: "hide", weight: 1.25, special: true }
     ]
   }
 
@@ -290,19 +327,22 @@ Item {
     anchors.bottom: parent.bottom
     visible: kbdRoot.tabletMode && (!kbdRoot.active || swipeMouse.pressed)
 
-    Rectangle {
+    BorderSurface {
       id: swipePill
-      width: swipeMouse.containsMouse || swipeMouse.pressed ? 130 : 92
-      height: swipeMouse.containsMouse || swipeMouse.pressed ? 5 : 4
-      radius: height / 2
+      width: swipeMouse.containsMouse || swipeMouse.pressed ? Style.space(136) : Style.space(96)
+      height: swipeMouse.containsMouse || swipeMouse.pressed ? Style.space(6) : Style.space(4)
+      radius: Style.cornerRadius
       anchors.horizontalCenter: parent.horizontalCenter
       anchors.bottom: parent.bottom
-      anchors.bottomMargin: 4
-      color: swipeMouse.containsMouse || swipeMouse.pressed ? Color.accent : Util.alpha(Color.foreground, 0.6)
+      anchors.bottomMargin: Style.spacing.sm
+      color: swipeMouse.containsMouse || swipeMouse.pressed
+        ? kbdRoot.surfaceAccent
+        : Util.alpha(kbdRoot.surfaceFg, 0.55)
+      borderSpec: Border.none()
       visible: kbdRoot.tabletMode && !kbdRoot.active && kbdRoot.slideOffset > kbdRoot.panelHeight - 20
 
-      Behavior on width { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
-      Behavior on color { ColorAnimation { duration: 150 } }
+      Behavior on width { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+      Behavior on color { ColorAnimation { duration: 120 } }
     }
 
     MouseArea {
@@ -345,46 +385,43 @@ Item {
     }
   }
 
-  // 2. Main Keyboard Surface (slides up from bottom)
-  Rectangle {
+  // 2. Main Keyboard Surface — uses Omarchy's native BorderSurface & [popups] theme tokens
+  BorderSurface {
     id: kbdSurface
-    width: parent.width
+    width: parent.width - kbdRoot.edgeMargin * 2
     height: kbdRoot.panelHeight
-    x: 0
+    x: kbdRoot.edgeMargin
     y: parent.height - height + kbdRoot.slideOffset
     visible: kbdRoot.active || kbdRoot.slideOffset < kbdRoot.panelHeight
-    color: Util.alpha(Color.background, 0.96)
-    radius: Math.max(Style.cornerRadius, 12)
+    color: kbdRoot.surfaceBg
+    borderSpec: kbdRoot.panelBorderSpec
+    radius: Style.cornerRadius
 
-    // Top border highlight
-    Rectangle {
-      anchors.top: parent.top
-      anchors.left: parent.left
-      anchors.right: parent.right
-      height: 1
-      color: Util.alpha(Color.foreground, 0.16)
-    }
-
-    // Top drag-handle pill (swipe down to close)
+    // Top drag-handle bar (swipe down to close)
     Item {
       id: topHandleArea
       anchors.top: parent.top
+      anchors.topMargin: kbdSurface.borderTop
       anchors.left: parent.left
       anchors.right: parent.right
-      height: 22
+      height: Style.space(20)
 
       Rectangle {
-        width: topDragMouse.pressed ? 72 : 52
-        height: 4
-        radius: 2
+        width: topDragMouse.pressed || topDragMouse.containsMouse ? Style.space(76) : Style.space(52)
+        height: Style.space(3)
+        radius: Style.cornerRadius
         anchors.centerIn: parent
-        color: topDragMouse.pressed ? Color.accent : Util.alpha(Color.foreground, 0.38)
-        Behavior on width { NumberAnimation { duration: 120 } }
+        color: topDragMouse.pressed || topDragMouse.containsMouse
+          ? kbdRoot.surfaceAccent
+          : Util.alpha(kbdRoot.surfaceFg, 0.35)
+        Behavior on width { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+        Behavior on color { ColorAnimation { duration: 120 } }
       }
 
       MouseArea {
         id: topDragMouse
         anchors.fill: parent
+        hoverEnabled: true
         preventStealing: true
         property real pressGlobalY: 0
 
@@ -418,9 +455,9 @@ Item {
       anchors.bottom: parent.bottom
       anchors.left: parent.left
       anchors.right: parent.right
-      anchors.leftMargin: kbdRoot.outerPad
-      anchors.rightMargin: kbdRoot.outerPad
-      anchors.bottomMargin: kbdRoot.outerPad
+      anchors.leftMargin: kbdSurface.borderLeft + kbdRoot.outerPad
+      anchors.rightMargin: kbdSurface.borderRight + kbdRoot.outerPad
+      anchors.bottomMargin: kbdSurface.borderBottom + kbdRoot.outerPad
       spacing: kbdRoot.rowSpacing
 
       readonly property var alphaRows: kbdRoot.getRows()
@@ -445,7 +482,6 @@ Item {
             ? Math.round((rowsCol.height - kbdRoot.rowSpacing * 4) * 0.145)
             : Math.round((rowsCol.height - kbdRoot.rowSpacing * 4) * 0.213)
 
-          // Calculate total weight in this row
           readonly property real totalWeight: {
             var sum = 0
             for (var i = 0; i < rowKeys.length; i++) {
@@ -461,11 +497,13 @@ Item {
           Repeater {
             model: rowItem.rowKeys.length
 
-            delegate: Rectangle {
+            delegate: BorderSurface {
               id: keyRect
               required property int index
               readonly property var keySpec: rowItem.rowKeys[index]
               readonly property real kWeight: keySpec.weight !== undefined ? keySpec.weight : 1.0
+              readonly property bool isHot: keyArea.containsMouse
+              readonly property bool isSelected: Boolean(keySpec.highlighted || keySpec.accent)
 
               width: Math.floor(rowItem.availWidth * (kWeight / rowItem.totalWeight))
               height: rowItem.height
@@ -482,23 +520,40 @@ Item {
               }
               y: 0
 
-              radius: Math.max(6, Style.cornerRadius)
-              color: {
-                if (keyArea.pressed) return Color.accent
-                if (keySpec.accent) return Util.alpha(Color.accent, 0.85)
-                if (keySpec.highlighted) return Util.alpha(Color.accent, 0.38)
-                if (keySpec.special) return Util.alpha(Color.foreground, 0.13)
-                return Util.alpha(Color.foreground, 0.08)
-              }
-              border.width: 1
-              border.color: keyArea.pressed || keySpec.highlighted
-                ? Color.accent
-                : Util.alpha(Color.foreground, 0.12)
+              radius: Style.cornerRadius
 
-              Behavior on color { ColorAnimation { duration: 80 } }
+              // Exact Omarchy [controls] state precedence from qs.Ui.Button
+              color: {
+                if (keyArea.pressed) {
+                  return Style.pressedFillFor(kbdRoot.surfaceFg, kbdRoot.surfaceAccent)
+                }
+                if (isSelected) {
+                  return Style.selectedFillFor(kbdRoot.surfaceFg, kbdRoot.surfaceAccent)
+                }
+                if (isHot) {
+                  return Style.hoverFillFor(kbdRoot.surfaceFg, kbdRoot.surfaceAccent)
+                }
+                if (keySpec.special) {
+                  return Util.alpha(kbdRoot.surfaceFg, Math.min(1, Style.normalFillAlpha * 1.85))
+                }
+                return Style.normalFillFor(kbdRoot.surfaceFg, kbdRoot.surfaceAccent)
+              }
+
+              borderSpec: {
+                if (keyArea.pressed || isSelected) {
+                  return Border.flat(kbdRoot.surfaceAccent, Math.max(1, Style.normalBorderWidth))
+                }
+                if (isHot) {
+                  return Border.controlSpec("hover-cursor", kbdRoot.surfaceFg, kbdRoot.surfaceAccent)
+                }
+                return Border.controlSpec("normal", kbdRoot.surfaceFg, kbdRoot.surfaceAccent)
+              }
+
+              Behavior on color { ColorAnimation { duration: 100 } }
 
               Text {
                 anchors.centerIn: parent
+                textFormat: Text.PlainText
                 text: {
                   var lbl = keySpec.label || ""
                   if (kbdRoot.layerMode === "alpha" && !keySpec.action && (kbdRoot.shiftActive || kbdRoot.capsLocked)) {
@@ -507,31 +562,92 @@ Item {
                   return lbl
                 }
                 font.family: Style.font.family
-                font.pixelSize: rowItem.isUtility ? 13 : (keySpec.special ? 14 : 17)
-                font.bold: keySpec.accent || keySpec.highlighted || false
-                color: keyArea.pressed || keySpec.accent ? Color.background : Color.foreground
+                font.pixelSize: rowItem.isUtility
+                  ? Style.font.bodySmall
+                  : (keySpec.special ? Style.font.body : Style.font.heading)
+                font.bold: isSelected || keyArea.pressed
+                color: (isSelected || keyArea.pressed)
+                  ? kbdRoot.surfaceAccent
+                  : kbdRoot.surfaceFg
               }
 
               // Subtle secondary shift symbol in top-right corner
               Text {
+                textFormat: Text.PlainText
                 visible: kbdRoot.layerMode === "alpha" && !rowItem.isUtility && keySpec.shiftLabel !== undefined && !kbdRoot.shiftActive && !kbdRoot.capsLocked
                 anchors.top: parent.top
                 anchors.right: parent.right
-                anchors.topMargin: 3
-                anchors.rightMargin: 6
+                anchors.topMargin: Style.spacing.xs
+                anchors.rightMargin: Style.spacing.md
                 text: keySpec.shiftLabel || ""
                 font.family: Style.font.family
-                font.pixelSize: 10
-                color: Util.alpha(Color.foreground, 0.45)
+                font.pixelSize: Style.font.caption
+                color: Util.alpha(kbdRoot.surfaceFg, 0.45)
               }
 
               MouseArea {
                 id: keyArea
                 anchors.fill: parent
+                hoverEnabled: true
                 preventStealing: true
-                onPressed: kbdRoot.startRepeat(keyRect.keySpec)
-                onReleased: kbdRoot.stopRepeat()
-                onCanceled: kbdRoot.stopRepeat()
+
+                property real pressX: 0
+                property real pressY: 0
+                property real lastStepX: 0
+                property real lastStepY: 0
+                property bool spaceDragged: false
+
+                onPressed: function(mouse) {
+                  if (keyRect.keySpec.isSpace) {
+                    pressX = mouse.x
+                    pressY = mouse.y
+                    lastStepX = mouse.x
+                    lastStepY = mouse.y
+                    spaceDragged = false
+                  } else {
+                    kbdRoot.startRepeat(keyRect.keySpec)
+                  }
+                }
+
+                onPositionChanged: function(mouse) {
+                  if (!pressed || !keyRect.keySpec.isSpace) return
+                  if (!spaceDragged && Math.abs(mouse.x - pressX) >= 12) {
+                    spaceDragged = true
+                    kbdRoot.spaceTrackpadActive = true
+                    lastStepX = mouse.x
+                    lastStepY = mouse.y
+                  }
+                  if (spaceDragged) {
+                    while (Math.abs(mouse.x - lastStepX) >= 15) {
+                      var hKey = (mouse.x > lastStepX) ? "Right" : "Left"
+                      kbdRoot.sendWtype(["-k", hKey])
+                      lastStepX += (mouse.x > lastStepX) ? 15 : -15
+                    }
+                    while (Math.abs(mouse.y - lastStepY) >= 22) {
+                      var vKey = (mouse.y > lastStepY) ? "Down" : "Up"
+                      kbdRoot.sendWtype(["-k", vKey])
+                      lastStepY += (mouse.y > lastStepY) ? 22 : -22
+                    }
+                  }
+                }
+
+                onReleased: function(mouse) {
+                  if (keyRect.keySpec.isSpace) {
+                    if (!spaceDragged) {
+                      kbdRoot.triggerKeyAction(keyRect.keySpec)
+                    }
+                    spaceDragged = false
+                    kbdRoot.spaceTrackpadActive = false
+                  } else {
+                    kbdRoot.stopRepeat()
+                  }
+                }
+
+                onCanceled: {
+                  spaceDragged = false
+                  kbdRoot.spaceTrackpadActive = false
+                  kbdRoot.stopRepeat()
+                }
               }
             }
           }
